@@ -29,8 +29,8 @@ func New() transport.Factory {
 }
 
 type kcpFactory struct {
-	_listener *kcp.Listener
-	_options  *Options
+	listener *kcp.Listener
+	options  *Options
 }
 
 func (*kcpFactory) Schemes() transport.Schemes {
@@ -59,12 +59,10 @@ func (f *kcpFactory) Listen(options *transport.Options) (transport.Acceptor, err
 		return nil, fmt.Errorf("Invalid scheme, %v://[host]:port ", f.Schemes())
 	}
 
-	// 关闭之前的监听
 	_ = f.Close()
 
 	kcpOptions := FromContext(options.Context, DefaultOptions)
 
-	// 监听本地端口
 	l, err := kcp.ListenWithOptions(options.AddressWithoutHost(), kcpOptions.Block, kcpOptions.DataShard, kcpOptions.ParityShard)
 	if nil != err {
 		return nil, err
@@ -85,30 +83,29 @@ func (f *kcpFactory) Listen(options *transport.Options) (transport.Acceptor, err
 		return nil, err
 	}
 
-	f._listener = l
-	f._options = kcpOptions
+	f.listener = l
+	f.options = kcpOptions
 	return f, nil
 }
 
 func (f *kcpFactory) Accept() (transport.Transport, error) {
 
-	if nil == f._listener {
+	if nil == f.listener {
 		return nil, errors.New("no listener")
 	}
 
-	// 接受一个连接
-	conn, err := f._listener.AcceptKCP()
+	conn, err := f.listener.AcceptKCP()
 	if nil != err {
 		return nil, err
 	}
 
-	return (&kcpTransport{UDPSession: conn}).applyOptions(f._options, false)
+	return (&kcpTransport{UDPSession: conn}).applyOptions(f.options, false)
 }
 
 func (f *kcpFactory) Close() error {
-	if f._listener != nil {
-		defer func() { f._listener = nil }()
-		return f._listener.Close()
+	if f.listener != nil {
+		defer func() { f.listener = nil }()
+		return f.listener.Close()
 	}
 	return nil
 }

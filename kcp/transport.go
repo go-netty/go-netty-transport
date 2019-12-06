@@ -26,7 +26,6 @@ type kcpTransport struct {
 }
 
 func (t *kcpTransport) Writev(buffs transport.Buffers) (int64, error) {
-	// kcp 底层会自动分片，可以当做普通的TCP来使用
 	n, err := t.UDPSession.WriteBuffers(buffs.Buffers)
 	return int64(n), err
 }
@@ -48,9 +47,7 @@ func (t *kcpTransport) applyOptions(kcpOptions *Options, client bool) (*kcpTrans
 	t.SetWindowSize(kcpOptions.SndWnd, kcpOptions.RcvWnd)
 	t.SetACKNoDelay(kcpOptions.AckNodelay)
 
-	// 客户端需要设置更多参数
 	if client {
-
 		if err := t.SetDSCP(kcpOptions.DSCP); nil != err {
 			return t, err
 		}

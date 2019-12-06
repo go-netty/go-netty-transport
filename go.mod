@@ -9,6 +9,7 @@ require (
 	github.com/gobwas/ws v1.0.2
 	github.com/klauspost/cpuid v1.2.1 // indirect
 	github.com/klauspost/reedsolomon v1.9.3 // indirect
+	github.com/marten-seemann/quic-conn v0.0.0-20191204020628-6e719687462b
 	github.com/pkg/errors v0.8.1 // indirect
 	github.com/templexxx/cpufeat v0.0.0-20180724012125-cef66df7f161 // indirect
 	github.com/templexxx/xor v0.0.0-20181023030647-4e92f724b73b // indirect

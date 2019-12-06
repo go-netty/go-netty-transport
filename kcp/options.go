@@ -112,7 +112,7 @@ func (o *Options) Apply() *Options {
 	return o
 }
 
-const contextKey = "citrus-rpc-transport-kcp-options"
+const contextKey = "go-netty-transport-kcp-options"
 
 func WithOptions(option *Options) transport.Option {
 	return func(options *transport.Options) error {
