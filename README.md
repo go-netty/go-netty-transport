@@ -14,3 +14,4 @@ An open source transport implementation for [go-netty](https://github.com/go-net
 1. TCP (builtin)
 2. KCP (A Fast and Reliable ARQ Protocol)
 3. Websocket
+4. QUIC (Quick UDP Internet Connections)
