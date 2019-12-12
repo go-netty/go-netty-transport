@@ -18,7 +18,6 @@ package websocket
 
 import (
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -51,8 +50,8 @@ func (*websocketFactory) Schemes() transport.Schemes {
 
 func (w *websocketFactory) Connect(options *transport.Options) (transport.Transport, error) {
 
-	if !w.Schemes().Valid(options.Address.Scheme) {
-		return nil, fmt.Errorf("Invalid scheme, %v://[host]:port ", w.Schemes())
+	if err := w.Schemes().FixedURL(options.Address); nil != err {
+		return nil, err
 	}
 
 	wsOptions := FromContext(options.Context, DefaultOptions)
@@ -101,8 +100,8 @@ func (w *websocketFactory) upgradeHTTP(writer http.ResponseWriter, request *http
 
 func (w *websocketFactory) Listen(options *transport.Options) (transport.Acceptor, error) {
 
-	if !w.Schemes().Valid(options.Address.Scheme) {
-		return nil, fmt.Errorf("Invalid scheme, %v://[host]:port ", w.Schemes())
+	if err := w.Schemes().FixedURL(options.Address); nil != err {
+		return nil, err
 	}
 
 	_ = w.Close()

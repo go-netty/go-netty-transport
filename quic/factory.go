@@ -18,7 +18,6 @@ package quic
 
 import (
 	"errors"
-	"fmt"
 	"github.com/go-netty/go-netty/transport"
 	"github.com/marten-seemann/quic-conn"
 	"net"
@@ -39,8 +38,8 @@ func (qf *quicFactory) Schemes() transport.Schemes {
 
 func (qf *quicFactory) Connect(options *transport.Options) (transport.Transport, error) {
 
-	if !qf.Schemes().Valid(options.Address.Scheme) {
-		return nil, fmt.Errorf("Invalid scheme, %v://[host]:port ", qf.Schemes())
+	if err := qf.Schemes().FixedURL(options.Address); nil != err {
+		return nil, err
 	}
 
 	quicOptions := FromContext(options.Context, DefaultOptions)
@@ -55,8 +54,8 @@ func (qf *quicFactory) Connect(options *transport.Options) (transport.Transport,
 
 func (qf *quicFactory) Listen(options *transport.Options) (transport.Acceptor, error) {
 
-	if !qf.Schemes().Valid(options.Address.Scheme) {
-		return nil, fmt.Errorf("Invalid scheme, %v://[host]:port ", qf.Schemes())
+	if err := qf.Schemes().FixedURL(options.Address); nil != err {
+		return nil, err
 	}
 
 	_ = qf.Close()

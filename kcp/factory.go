@@ -18,8 +18,6 @@ package kcp
 
 import (
 	"errors"
-	"fmt"
-
 	"github.com/go-netty/go-netty/transport"
 	"github.com/xtaci/kcp-go"
 )
@@ -39,8 +37,8 @@ func (*kcpFactory) Schemes() transport.Schemes {
 
 func (f *kcpFactory) Connect(options *transport.Options) (transport.Transport, error) {
 
-	if !f.Schemes().Valid(options.Address.Scheme) {
-		return nil, fmt.Errorf("Invalid scheme, %v://[host]:port ", f.Schemes())
+	if err := f.Schemes().FixedURL(options.Address); nil != err {
+		return nil, err
 	}
 
 	kcpOptions := FromContext(options.Context, DefaultOptions)
@@ -55,8 +53,8 @@ func (f *kcpFactory) Connect(options *transport.Options) (transport.Transport, e
 
 func (f *kcpFactory) Listen(options *transport.Options) (transport.Acceptor, error) {
 
-	if !f.Schemes().Valid(options.Address.Scheme) {
-		return nil, fmt.Errorf("Invalid scheme, %v://[host]:port ", f.Schemes())
+	if err := f.Schemes().FixedURL(options.Address); nil != err {
+		return nil, err
 	}
 
 	_ = f.Close()
