@@ -34,7 +34,6 @@ type Options struct {
 	Cert     string         `json:"cert"`
 	Key      string         `json:"key"`
 	Binary   bool           `json:"binary,string"`
-	Stream   bool           `json:"stream,string"`
 	Routers  []string       `json:"routers"`
 	ServeMux *http.ServeMux `json:"-"`
 }

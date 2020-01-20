@@ -18,7 +18,6 @@ package websocket
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"net"
 
@@ -32,7 +31,6 @@ type websocketTransport struct {
 	closer  func() error
 	options *Options
 	state   ws.State
-	reader  io.Reader
 	path    string
 }
 
@@ -40,96 +38,24 @@ func (t *websocketTransport) Path() string {
 	return t.path
 }
 
-func (t *websocketTransport) readFrame(want ws.OpCode) (io.Reader, error) {
-	controlHandler := wsutil.ControlFrameHandler(t.conn, t.state)
-	rd := &wsutil.Reader{
-		Source:          t.conn,
-		State:           t.state,
-		CheckUTF8:       !t.options.Binary,
-		SkipHeaderCheck: false,
-		OnIntermediate:  controlHandler,
-	}
-
-	for {
-		// read frame.
-		hdr, err := rd.NextFrame()
-		if err != nil {
-			return nil, err
-		}
-
-		// handle websocket control frame.
-		if hdr.OpCode.IsControl() {
-			if err := controlHandler(hdr, rd); err != nil {
-				return nil, err
-			}
-			continue
-		}
-
-		// check frame.
-		if hdr.OpCode&want == 0 {
-			if err := rd.Discard(); err != nil {
-				return nil, err
-			}
-			continue
-		}
-
-		return rd, nil
-	}
-
-}
-
 func (t *websocketTransport) Read(p []byte) (n int, err error) {
 
-	if t.reader != nil {
-		n, err = t.reader.Read(p)
+	hdr, reader, err := t.nextPacket(ws.OpText | ws.OpBinary)
+	if nil != err {
+		return 0, err
+	}
 
-		switch {
-		case n > 0:
+	if n, err = reader.Read(p); nil != err {
+		return
+	}
 
-			// 数据包包模式下，需要将剩余的数据包读完(丢弃)
-			if !t.options.Stream {
-				// 包模式下，可以将数据包读完之后返回一个错误，上层将可以感知到当前数据包已经读取完成
-				// 这样可以不用将数据丢弃
-
-				if io.EOF == err {
-					// 当前数据包已经读完了, 下一次将要读取下一个包
-					t.reader = nil
-
-					// 保留err信息，告知上层本数据包已经读完了
-				}
-
-				return
-			}
-
-			// 数据流模式下ws Reader行为与标准Reader行为不一致
-			// 额外处理一下
-			if io.EOF == err {
-				// 当前数据包已经读完了, 下一次将要读取下一个包
-				t.reader = nil
-
-				// 确保与标准接口行为一致, 重置err信息，继续读取下一帧数据
-				err = nil
-			}
-			return
-		case io.EOF != err:
-			return
+	if int64(n) < hdr.Length {
+		if err = reader.Discard(); nil == err {
+			err = io.ErrShortBuffer
 		}
 	}
 
-	// 读取下一个帧(包)
-	if t.reader, err = t.readFrame(ws.OpText | ws.OpBinary); nil != err {
-		// 数据流模式下，直接返回错误（EOF），上层会认为连接断开
-		if t.options.Stream {
-			return 0, err
-		}
-		// 数据包模式下，上层通过EOF来判断是否读取完一个包所以此处的错误不能直接返回EOF
-		if err != io.EOF {
-			return 0, err
-		}
-		return 0, fmt.Errorf("read frame: %v", err)
-	}
-
-	return t.Read(p)
+	return
 }
 
 func (t *websocketTransport) Write(p []byte) (n int, err error) {
@@ -177,6 +103,14 @@ func (t *websocketTransport) Writev(buffs transport.Buffers) (int64, error) {
 	return combineBuffers.WriteTo(t.conn)
 }
 
+func (t *websocketTransport) Flush() error {
+	return nil
+}
+
+func (t *websocketTransport) RawTransport() interface{} {
+	return t.conn
+}
+
 func (t *websocketTransport) mode() ws.OpCode {
 	if t.options.Binary {
 		return ws.OpBinary
@@ -206,12 +140,42 @@ func (t *websocketTransport) buildFrame(buffs [][]byte) (frame ws.Frame) {
 	return
 }
 
-func (t *websocketTransport) Flush() error {
-	return nil
-}
+func (t *websocketTransport) nextPacket(want ws.OpCode) (hdr ws.Header, reader *wsutil.Reader, err error) {
 
-func (t *websocketTransport) RawTransport() interface{} {
-	return t.conn
+	controlHandler := wsutil.ControlFrameHandler(t.conn, t.state)
+	rd := &wsutil.Reader{
+		Source:          t.conn,
+		State:           t.state,
+		CheckUTF8:       !t.options.Binary,
+		SkipHeaderCheck: false,
+		OnIntermediate:  controlHandler,
+	}
+
+	for {
+		// read frame.
+		hdr, err := rd.NextFrame()
+		if err != nil {
+			return hdr, nil, err
+		}
+
+		// handle websocket control frame.
+		if hdr.OpCode.IsControl() {
+			if err := controlHandler(hdr, rd); err != nil {
+				return hdr, nil, err
+			}
+			continue
+		}
+
+		// check frame.
+		if hdr.OpCode&want == 0 {
+			if err := rd.Discard(); err != nil {
+				return hdr, nil, err
+			}
+			continue
+		}
+
+		return hdr, rd, nil
+	}
 }
 
 func (t *websocketTransport) applyOptions(wsOptions *Options, client bool) (*websocketTransport, error) {
