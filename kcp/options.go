@@ -26,6 +26,7 @@ import (
 	"golang.org/x/crypto/pbkdf2"
 )
 
+// DefaultOptions default kcp options
 var DefaultOptions = (&Options{
 	Key:          "it's a secrecy",
 	Crypt:        "",
@@ -45,6 +46,7 @@ var DefaultOptions = (&Options{
 	KeepAlive:    10,
 }).Apply()
 
+// Options to define the kcp
 type Options struct {
 	Key          string `json:"key"`
 	Crypt        string `json:"crypt"`              // aes, aes-128, aes-192, salsa20, blowfish, twofish, cast5, 3des, tea, xtea, xor, sm4, none
@@ -66,6 +68,7 @@ type Options struct {
 	Block kcp.BlockCrypt `json:"-"`
 }
 
+// Apply the kcp mode & encryption options
 func (o *Options) Apply() *Options {
 
 	switch strings.ToLower(o.Mode) {
@@ -112,8 +115,9 @@ func (o *Options) Apply() *Options {
 	return o
 }
 
-const contextKey = "go-netty-transport-kcp-options"
+var contextKey = struct{ key string }{"go-netty-transport-kcp-options"}
 
+// WithOptions to wrap the kcp options
 func WithOptions(option *Options) transport.Option {
 	return func(options *transport.Options) error {
 		options.Context = context.WithValue(options.Context, contextKey, option)
@@ -121,6 +125,7 @@ func WithOptions(option *Options) transport.Option {
 	}
 }
 
+// FromContext to unwrap the kcp options
 func FromContext(ctx context.Context, def *Options) *Options {
 	if v, ok := ctx.Value(contextKey).(*Options); ok {
 		return v.Apply()

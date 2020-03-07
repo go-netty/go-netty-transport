@@ -24,7 +24,7 @@ import (
 	"net"
 )
 
-func newUdpClientTransport(conn *net.UDPConn) *udpClientTransport {
+func newUDPClientTransport(conn *net.UDPConn) *udpClientTransport {
 	return &udpClientTransport{UDPConn: conn}
 }
 
@@ -61,7 +61,7 @@ func (u *udpClientTransport) RawTransport() interface{} {
 	return u.UDPConn
 }
 
-func newUdpServerTransport(conn *net.UDPConn, raddr *net.UDPAddr) *udpServerTransport {
+func newUDPServerTransport(conn *net.UDPConn, raddr *net.UDPAddr) *udpServerTransport {
 	return &udpServerTransport{
 		UDPConn:       conn,
 		raddr:         raddr,

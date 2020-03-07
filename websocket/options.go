@@ -24,11 +24,13 @@ import (
 	"github.com/go-netty/go-netty/transport"
 )
 
+// DefaultOptions default websocket options
 var DefaultOptions = &Options{
 	Timeout:  time.Second * 5,
 	ServeMux: http.DefaultServeMux,
 }
 
+// Options to define the websocket
 type Options struct {
 	Timeout  time.Duration  `json:"timeout"`
 	Cert     string         `json:"cert"`
@@ -38,8 +40,9 @@ type Options struct {
 	ServeMux *http.ServeMux `json:"-"`
 }
 
-const contextKey = "go-netty-transport-websocket-options"
+var contextKey = struct{ key string }{"go-netty-transport-websocket-options"}
 
+// WithOptions to wrap the websocket options
 func WithOptions(option *Options) transport.Option {
 	return func(options *transport.Options) error {
 		options.Context = context.WithValue(options.Context, contextKey, option)
@@ -47,6 +50,7 @@ func WithOptions(option *Options) transport.Option {
 	}
 }
 
+// FromContext to unwrap the websocket options
 func FromContext(ctx context.Context, def *Options) *Options {
 	if v, ok := ctx.Value(contextKey).(*Options); ok {
 		return v

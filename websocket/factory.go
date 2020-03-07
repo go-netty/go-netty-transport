@@ -27,6 +27,7 @@ import (
 	"github.com/gobwas/ws"
 )
 
+// New websocket transport factory
 func New() transport.Factory {
 	return new(websocketFactory)
 }

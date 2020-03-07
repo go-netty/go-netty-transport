@@ -23,6 +23,7 @@ import (
 	"net"
 )
 
+// New quic transport factory
 func New() transport.Factory {
 	return new(quicFactory)
 }
@@ -44,7 +45,7 @@ func (qf *quicFactory) Connect(options *transport.Options) (transport.Transport,
 
 	quicOptions := FromContext(options.Context, DefaultOptions)
 
-	conn, err := quicconn.Dial(options.Address.Host, quicOptions.Tls)
+	conn, err := quicconn.Dial(options.Address.Host, quicOptions.TLS)
 	if nil != err {
 		return nil, err
 	}
@@ -62,7 +63,7 @@ func (qf *quicFactory) Listen(options *transport.Options) (transport.Acceptor, e
 
 	quicOptions := FromContext(options.Context, DefaultOptions)
 
-	l, err := quicconn.Listen("udp", options.AddressWithoutHost(), quicOptions.Tls)
+	l, err := quicconn.Listen("udp", options.AddressWithoutHost(), quicOptions.TLS)
 	if nil != err {
 		return nil, err
 	}

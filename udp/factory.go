@@ -22,6 +22,7 @@ import (
 	"net"
 )
 
+// New udp transport factory
 func New() transport.Factory {
 	return new(udpFactory)
 }
@@ -54,7 +55,7 @@ func (u *udpFactory) Connect(options *transport.Options) (transport.Transport, e
 		return nil, err
 	}
 
-	return newUdpClientTransport(conn), nil
+	return newUDPClientTransport(conn), nil
 }
 
 func (u *udpFactory) Listen(options *transport.Options) (transport.Acceptor, error) {
@@ -127,7 +128,7 @@ func (u *udpFactory) mainLoop() {
 
 		trans, ok := u.transports[raddr.String()]
 		if !ok {
-			trans = newUdpServerTransport(u.listener, raddr)
+			trans = newUDPServerTransport(u.listener, raddr)
 
 			select {
 			case u.incoming <- trans:

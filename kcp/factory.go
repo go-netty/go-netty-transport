@@ -22,6 +22,7 @@ import (
 	"github.com/xtaci/kcp-go"
 )
 
+// New a kcp transport factory
 func New() transport.Factory {
 	return new(kcpFactory)
 }
