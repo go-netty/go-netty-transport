@@ -3,10 +3,10 @@ module github.com/go-netty/go-netty-transport
 go 1.13
 
 require (
-	github.com/go-netty/go-netty v0.0.0-20200120034908-8866f2cc9997
+	github.com/go-netty/go-netty v0.0.0-20200328182313-d3095d962ab1
 	github.com/gobwas/httphead v0.0.0-20180130184737-2c6c146eadee // indirect
 	github.com/gobwas/pool v0.2.0 // indirect
-	github.com/gobwas/ws v1.0.2
+	github.com/gobwas/ws v1.0.3
 	github.com/klauspost/cpuid v1.2.1 // indirect
 	github.com/klauspost/reedsolomon v1.9.3 // indirect
 	github.com/marten-seemann/quic-conn v0.0.0-20191204020628-6e719687462b

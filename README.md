@@ -16,3 +16,4 @@ An open source transport implementation for [go-netty](https://github.com/go-net
 3. Websocket
 4. QUIC (Quick UDP Internet Connections)
 5. UDP
+6. TLS (Transport Layer Security over Tcp)
