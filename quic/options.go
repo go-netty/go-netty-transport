@@ -27,7 +27,25 @@ var DefaultOptions = &Options{}
 
 // Options to define the quic
 type Options struct {
-	TLS *tls.Config
+	TLS      *tls.Config
+	CertFile string
+	KeyFile  string
+}
+
+func (o *Options) Apply() *Options {
+	if nil == o.TLS {
+		o.TLS = &tls.Config{}
+	}
+
+	if "" != o.CertFile && "" != o.KeyFile {
+		if cer, err := tls.LoadX509KeyPair(o.CertFile, o.KeyFile); nil != err {
+			panic(err)
+		} else {
+			o.TLS.Certificates = []tls.Certificate{cer}
+		}
+	}
+
+	return o
 }
 
 var contextKey = struct{ key string }{"go-netty-transport-quic-options"}
@@ -35,7 +53,7 @@ var contextKey = struct{ key string }{"go-netty-transport-quic-options"}
 // WithOptions to wrap the quic options
 func WithOptions(option *Options) transport.Option {
 	return func(options *transport.Options) error {
-		options.Context = context.WithValue(options.Context, contextKey, option)
+		options.Context = context.WithValue(options.Context, contextKey, option.Apply())
 		return nil
 	}
 }

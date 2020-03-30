@@ -45,7 +45,7 @@ func (t *tlsFactory) Connect(options *transport.Options) (transport.Transport, e
 
 	tlsOptions := FromContext(options.Context, DefaultOptions)
 
-	conn, err := tls.Dial(options.Address.Scheme, options.Address.Host, tlsOptions)
+	conn, err := tls.Dial(options.Address.Scheme, options.Address.Host, tlsOptions.TLS)
 	if nil != err {
 		return nil, err
 	}
@@ -63,7 +63,7 @@ func (t *tlsFactory) Listen(options *transport.Options) (transport.Acceptor, err
 
 	tlsOptions := FromContext(options.Context, DefaultOptions)
 
-	l, err := tls.Listen(options.Address.Scheme, options.AddressWithoutHost(), tlsOptions)
+	l, err := tls.Listen(options.Address.Scheme, options.AddressWithoutHost(), tlsOptions.TLS)
 	if nil != err {
 		return nil, err
 	}
