@@ -32,40 +32,37 @@ var DefaultOptions = (&Options{
 	Crypt:        "",
 	Mode:         "fast",
 	MTU:          1350,
-	SndWnd:       1024,
-	RcvWnd:       1024,
-	DataShard:    10,
-	ParityShard:  10,
+	SndWnd:       32,
+	RcvWnd:       32,
+	DataShard:    0,
+	ParityShard:  0,
 	DSCP:         0,
 	AckNodelay:   false,
 	NoDelay:      0,
-	Interval:     50,
-	Resend:       0,
-	NoCongestion: 0,
+	Interval:     30,
+	Resend:       2,
+	NoCongestion: 1,
 	SockBuf:      4194304,
-	KeepAlive:    10,
 }).Apply()
 
 // Options to define the kcp
 type Options struct {
-	Key          string `json:"key"`
-	Crypt        string `json:"crypt"`              // aes, aes-128, aes-192, salsa20, blowfish, twofish, cast5, 3des, tea, xtea, xor, sm4, none
-	Mode         string `json:"mode"`               // fast3, fast2, fast, normal, manual
-	MTU          int    `json:"mtu,string"`         // set maximum transmission unit for UDP packets
-	SndWnd       int    `json:"sndwnd,string"`      // set send window size(num of packets)
-	RcvWnd       int    `json:"rcvwnd,string"`      // set receive window size(num of packets)
-	DataShard    int    `json:"datashard,string"`   // set reed-solomon erasure coding - datashard
-	ParityShard  int    `json:"parityshard,string"` // set reed-solomon erasure coding - parityshard
-	DSCP         int    `json:"dscp,string"`        // set DSCP(6bit)
-	AckNodelay   bool   `json:"acknodelay,string"`  // flush ack immediately when a packet is received
-	NoDelay      int    `json:"nodelay,string"`
-	Interval     int    `json:"interval,string"`
-	Resend       int    `json:"resend,string"`
-	NoCongestion int    `json:"nc,string"`
-	SockBuf      int    `json:"sockbuf,string"`   // per-socket buffer in bytes
-	KeepAlive    int    `json:"keepalive,string"` // seconds between heartbeats
-
-	Block kcp.BlockCrypt `json:"-"`
+	Key          string         `json:"key"`
+	Crypt        string         `json:"crypt"`              // aes, aes-128, aes-192, salsa20, blowfish, twofish, cast5, 3des, tea, xtea, xor, sm4, none
+	Mode         string         `json:"mode"`               // fast3, fast2, fast, normal, manual
+	MTU          int            `json:"mtu,string"`         // set maximum transmission unit for UDP packets
+	SndWnd       int            `json:"sndwnd,string"`      // set send window size(num of packets)
+	RcvWnd       int            `json:"rcvwnd,string"`      // set receive window size(num of packets)
+	DataShard    int            `json:"datashard,string"`   // set reed-solomon erasure coding - datashard
+	ParityShard  int            `json:"parityshard,string"` // set reed-solomon erasure coding - parityshard
+	DSCP         int            `json:"dscp,string"`        // set DSCP(6bit)
+	AckNodelay   bool           `json:"acknodelay,string"`  // flush ack immediately when a packet is received
+	NoDelay      int            `json:"nodelay,string"`
+	Interval     int            `json:"interval,string"`
+	Resend       int            `json:"resend,string"`
+	NoCongestion int            `json:"nc,string"`
+	SockBuf      int            `json:"sockbuf,string"` // per-socket buffer in bytes
+	Block        kcp.BlockCrypt `json:"-"`
 }
 
 // Apply the kcp mode & encryption options
@@ -84,33 +81,39 @@ func (o *Options) Apply() *Options {
 
 	pass := pbkdf2.Key([]byte(o.Key), []byte("kcp-go"), 4096, 32, sha1.New)
 
+	var err error
 	switch strings.ToLower(o.Crypt) {
 	case "sm4":
-		o.Block, _ = kcp.NewSM4BlockCrypt(pass[:16])
+		o.Block, err = kcp.NewSM4BlockCrypt(pass[:16])
 	case "tea":
-		o.Block, _ = kcp.NewTEABlockCrypt(pass[:16])
+		o.Block, err = kcp.NewTEABlockCrypt(pass[:16])
 	case "xor":
-		o.Block, _ = kcp.NewSimpleXORBlockCrypt(pass)
+		o.Block, err = kcp.NewSimpleXORBlockCrypt(pass)
 	case "none":
-		o.Block, _ = kcp.NewNoneBlockCrypt(pass)
+		o.Block, err = kcp.NewNoneBlockCrypt(pass)
 	case "aes-128":
-		o.Block, _ = kcp.NewAESBlockCrypt(pass[:16])
+		o.Block, err = kcp.NewAESBlockCrypt(pass[:16])
 	case "aes-192":
-		o.Block, _ = kcp.NewAESBlockCrypt(pass[:24])
+		o.Block, err = kcp.NewAESBlockCrypt(pass[:24])
 	case "blowfish":
-		o.Block, _ = kcp.NewBlowfishBlockCrypt(pass)
+		o.Block, err = kcp.NewBlowfishBlockCrypt(pass)
 	case "twofish":
-		o.Block, _ = kcp.NewTwofishBlockCrypt(pass)
+		o.Block, err = kcp.NewTwofishBlockCrypt(pass)
 	case "cast5":
-		o.Block, _ = kcp.NewCast5BlockCrypt(pass[:16])
+		o.Block, err = kcp.NewCast5BlockCrypt(pass[:16])
 	case "3des":
-		o.Block, _ = kcp.NewTripleDESBlockCrypt(pass[:24])
+		o.Block, err = kcp.NewTripleDESBlockCrypt(pass[:24])
 	case "xtea":
-		o.Block, _ = kcp.NewXTEABlockCrypt(pass[:16])
+		o.Block, err = kcp.NewXTEABlockCrypt(pass[:16])
 	case "salsa20":
-		o.Block, _ = kcp.NewSalsa20BlockCrypt(pass)
+		o.Block, err = kcp.NewSalsa20BlockCrypt(pass)
 	default:
 	}
+
+	if nil != err {
+		panic(err)
+	}
+
 
 	return o
 }
