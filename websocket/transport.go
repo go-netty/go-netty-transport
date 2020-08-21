@@ -42,6 +42,9 @@ func (t *websocketTransport) Read(p []byte) (n int, err error) {
 
 	hdr, reader, err := t.nextPacket(ws.OpText | ws.OpBinary)
 	if nil != err {
+		if io.EOF == err && nil == reader {
+			return 0, io.ErrUnexpectedEOF
+		}
 		return 0, err
 	}
 
