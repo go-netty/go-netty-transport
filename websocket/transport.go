@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"io"
 	"net"
+	"net/http"
 
 	"github.com/go-netty/go-netty/transport"
 	"github.com/gobwas/ws"
@@ -32,6 +33,7 @@ type websocketTransport struct {
 	options *Options
 	state   ws.State
 	path    string
+	request *http.Request
 }
 
 func (t *websocketTransport) Path() string {
@@ -112,6 +114,10 @@ func (t *websocketTransport) Flush() error {
 
 func (t *websocketTransport) RawTransport() interface{} {
 	return t.conn
+}
+
+func(t *websocketTransport) HttpRequest() *http.Request {
+	return t.request
 }
 
 func (t *websocketTransport) mode() ws.OpCode {

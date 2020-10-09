@@ -33,9 +33,10 @@ func New() transport.Factory {
 }
 
 type acceptEvent struct {
-	conn   net.Conn
-	closer func() error
-	path   string
+	conn    net.Conn
+	closer  func() error
+	path    string
+	request *http.Request
 }
 
 type websocketFactory struct {
@@ -92,7 +93,7 @@ func (w *websocketFactory) upgradeHTTP(writer http.ResponseWriter, request *http
 			close(connCloseSignal)
 		}
 		return nil
-	}, path: request.URL.Path}:
+	}, path: request.URL.Path, request: request}:
 	}
 
 	// waiting for connection to close
@@ -156,7 +157,7 @@ func (w *websocketFactory) Accept() (transport.Transport, error) {
 		return nil, errors.New("server has been closed")
 	}
 
-	return (&websocketTransport{conn: accept.conn.(*net.TCPConn), closer: accept.closer, path: accept.path}).applyOptions(w.wsOptions, false)
+	return (&websocketTransport{conn: accept.conn.(*net.TCPConn), closer: accept.closer, path: accept.path, request: accept.request}).applyOptions(w.wsOptions, false)
 }
 
 func (w *websocketFactory) Close() error {
