@@ -114,7 +114,6 @@ func (o *Options) Apply() *Options {
 		panic(err)
 	}
 
-
 	return o
 }
 

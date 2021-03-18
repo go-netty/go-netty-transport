@@ -28,10 +28,7 @@ func New() transport.Factory {
 	return new(tlsFactory)
 }
 
-type tlsFactory struct {
-	listener net.Listener
-	options  *Options
-}
+type tlsFactory struct{}
 
 func (t *tlsFactory) Schemes() transport.Schemes {
 	return transport.Schemes{"tcp", "tcp4", "tcp6"}
@@ -59,8 +56,6 @@ func (t *tlsFactory) Listen(options *transport.Options) (transport.Acceptor, err
 		return nil, err
 	}
 
-	_ = t.Close()
-
 	tlsOptions := FromContext(options.Context, DefaultOptions)
 
 	l, err := tls.Listen(options.Address.Scheme, options.AddressWithoutHost(), tlsOptions.TLS)
@@ -68,12 +63,15 @@ func (t *tlsFactory) Listen(options *transport.Options) (transport.Acceptor, err
 		return nil, err
 	}
 
-	t.listener = l
-	t.options = tlsOptions
-	return t, nil
+	return &tlsAcceptor{listener: l, options: tlsOptions}, nil
 }
 
-func (t *tlsFactory) Accept() (transport.Transport, error) {
+type tlsAcceptor struct {
+	listener net.Listener
+	options  *Options
+}
+
+func (t *tlsAcceptor) Accept() (transport.Transport, error) {
 	if nil == t.listener {
 		return nil, errors.New("no listener")
 	}
@@ -86,7 +84,7 @@ func (t *tlsFactory) Accept() (transport.Transport, error) {
 	return &tlsTransport{Conn: conn.(*tls.Conn)}, nil
 }
 
-func (t *tlsFactory) Close() error {
+func (t *tlsAcceptor) Close() error {
 	if t.listener != nil {
 		defer func() { t.listener = nil }()
 		return t.listener.Close()

@@ -17,7 +17,6 @@
 package kcp
 
 import (
-	"errors"
 	"github.com/go-netty/go-netty/transport"
 	"github.com/xtaci/kcp-go"
 )
@@ -27,10 +26,7 @@ func New() transport.Factory {
 	return new(kcpFactory)
 }
 
-type kcpFactory struct {
-	listener *kcp.Listener
-	options  *Options
-}
+type kcpFactory struct{}
 
 func (*kcpFactory) Schemes() transport.Schemes {
 	return transport.Schemes{"kcp"}
@@ -58,8 +54,6 @@ func (f *kcpFactory) Listen(options *transport.Options) (transport.Acceptor, err
 		return nil, err
 	}
 
-	_ = f.Close()
-
 	kcpOptions := FromContext(options.Context, DefaultOptions)
 
 	l, err := kcp.ListenWithOptions(options.AddressWithoutHost(), kcpOptions.Block, kcpOptions.DataShard, kcpOptions.ParityShard)
@@ -82,29 +76,27 @@ func (f *kcpFactory) Listen(options *transport.Options) (transport.Acceptor, err
 		return nil, err
 	}
 
-	f.listener = l
-	f.options = kcpOptions
-	return f, nil
+	return &kcpAcceptor{listener: l, options: kcpOptions}, nil
 }
 
-func (f *kcpFactory) Accept() (transport.Transport, error) {
+type kcpAcceptor struct {
+	listener *kcp.Listener
+	options  *Options
+}
 
-	if nil == f.listener {
-		return nil, errors.New("no listener")
-	}
-
-	conn, err := f.listener.AcceptKCP()
+func (k *kcpAcceptor) Accept() (transport.Transport, error) {
+	conn, err := k.listener.AcceptKCP()
 	if nil != err {
 		return nil, err
 	}
 
-	return (&kcpTransport{UDPSession: conn}).applyOptions(f.options, false)
+	return (&kcpTransport{UDPSession: conn}).applyOptions(k.options, false)
 }
 
-func (f *kcpFactory) Close() error {
-	if f.listener != nil {
-		defer func() { f.listener = nil }()
-		return f.listener.Close()
+func (k *kcpAcceptor) Close() error {
+	if k.listener != nil {
+		defer func() { k.listener = nil }()
+		return k.listener.Close()
 	}
 	return nil
 }

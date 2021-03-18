@@ -116,7 +116,7 @@ func (t *websocketTransport) RawTransport() interface{} {
 	return t.conn
 }
 
-func(t *websocketTransport) HttpRequest() *http.Request {
+func (t *websocketTransport) HttpRequest() *http.Request {
 	return t.request
 }
 

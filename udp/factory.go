@@ -27,13 +27,7 @@ func New() transport.Factory {
 	return new(udpFactory)
 }
 
-type udpFactory struct {
-	listener   *net.UDPConn
-	options    *Options
-	transports map[string]*udpServerTransport
-	incoming   chan *udpServerTransport
-	closed     chan struct{}
-}
+type udpFactory struct{}
 
 func (*udpFactory) Schemes() transport.Schemes {
 	return transport.Schemes{"udp", "udp4", "udp6"}
@@ -64,8 +58,6 @@ func (u *udpFactory) Listen(options *transport.Options) (transport.Acceptor, err
 		return nil, err
 	}
 
-	_ = u.Close()
-
 	listenAddr, err := net.ResolveUDPAddr(options.Address.Scheme, options.Address.Host)
 	if nil != err {
 		return nil, err
@@ -76,17 +68,29 @@ func (u *udpFactory) Listen(options *transport.Options) (transport.Acceptor, err
 		return nil, err
 	}
 
-	u.listener = l
-	u.options = FromContext(options.Context, DefaultOptions)
-	u.transports = make(map[string]*udpServerTransport)
-	u.incoming = make(chan *udpServerTransport, u.options.MaxBacklog)
-	u.closed = make(chan struct{})
+	udpOptions := FromContext(options.Context, DefaultOptions)
 
-	go u.mainLoop()
-	return u, nil
+	ua := &udpAcceptor{
+		listener:   l,
+		options:    udpOptions,
+		transports: make(map[string]*udpServerTransport),
+		incoming:   make(chan *udpServerTransport, udpOptions.MaxBacklog),
+		closed:     make(chan struct{}),
+	}
+
+	go ua.mainLoop()
+	return ua, nil
 }
 
-func (u *udpFactory) Accept() (transport.Transport, error) {
+type udpAcceptor struct {
+	listener   *net.UDPConn
+	options    *Options
+	transports map[string]*udpServerTransport
+	incoming   chan *udpServerTransport
+	closed     chan struct{}
+}
+
+func (u *udpAcceptor) Accept() (transport.Transport, error) {
 
 	select {
 	case <-u.closed:
@@ -96,7 +100,7 @@ func (u *udpFactory) Accept() (transport.Transport, error) {
 	}
 }
 
-func (u *udpFactory) Close() error {
+func (u *udpAcceptor) Close() error {
 
 	if nil != u.listener {
 		select {
@@ -111,7 +115,7 @@ func (u *udpFactory) Close() error {
 	return nil
 }
 
-func (u *udpFactory) mainLoop() {
+func (u *udpAcceptor) mainLoop() {
 
 	var buffer = make([]byte, u.options.MaxPacketSize)
 

@@ -32,19 +32,7 @@ func New() transport.Factory {
 	return new(websocketFactory)
 }
 
-type acceptEvent struct {
-	conn    net.Conn
-	closer  func() error
-	path    string
-	request *http.Request
-}
-
-type websocketFactory struct {
-	httpServer   *http.Server
-	incoming     chan acceptEvent
-	closedSignal chan struct{}
-	wsOptions    *Options
-}
+type websocketFactory struct{}
 
 func (*websocketFactory) Schemes() transport.Schemes {
 	return transport.Schemes{"ws", "wss"}
@@ -69,7 +57,73 @@ func (w *websocketFactory) Connect(options *transport.Options) (transport.Transp
 	return (&websocketTransport{conn: conn.(*net.TCPConn), closer: conn.Close, path: u.Path}).applyOptions(wsOptions, true)
 }
 
-func (w *websocketFactory) upgradeHTTP(writer http.ResponseWriter, request *http.Request) {
+func (w *websocketFactory) Listen(options *transport.Options) (transport.Acceptor, error) {
+
+	if err := w.Schemes().FixedURL(options.Address); nil != err {
+		return nil, err
+	}
+
+	listen, err := net.Listen("tcp", options.AddressWithoutHost())
+	if nil != err {
+		return nil, err
+	}
+
+	wsOptions := FromContext(options.Context, DefaultOptions)
+
+	wa := &wsAcceptor{
+		wsOptions:    wsOptions,
+		incoming:     make(chan acceptEvent, 128),
+		httpServer:   &http.Server{Addr: listen.Addr().String(), Handler: wsOptions.ServeMux},
+		closedSignal: make(chan struct{}),
+	}
+
+	var routers = []string{options.Address.Path}
+	if len(wa.wsOptions.Routers) > 0 {
+		routers = wa.wsOptions.Routers
+	}
+
+	for _, router := range routers {
+		wa.wsOptions.ServeMux.HandleFunc(router, wa.upgradeHTTP)
+	}
+
+	errorChan := make(chan error, 1)
+
+	go func() {
+		switch options.Address.Scheme {
+		case "ws":
+			errorChan <- wa.httpServer.Serve(listen)
+		case "wss":
+			errorChan <- wa.httpServer.ServeTLS(listen, wa.wsOptions.Cert, wa.wsOptions.Key)
+		}
+	}()
+
+	// temporary plan
+	// waiting for server initialization
+	time.Sleep(time.Second)
+
+	select {
+	case err := <-errorChan:
+		return nil, err
+	default:
+		return wa, nil
+	}
+}
+
+type acceptEvent struct {
+	conn    net.Conn
+	closer  func() error
+	path    string
+	request *http.Request
+}
+
+type wsAcceptor struct {
+	httpServer   *http.Server
+	incoming     chan acceptEvent
+	closedSignal chan struct{}
+	wsOptions    *Options
+}
+
+func (w *wsAcceptor) upgradeHTTP(writer http.ResponseWriter, request *http.Request) {
 
 	conn, _, _, err := ws.UpgradeHTTP(request, writer)
 	if conn != nil {
@@ -77,7 +131,6 @@ func (w *websocketFactory) upgradeHTTP(writer http.ResponseWriter, request *http
 	}
 
 	if nil != err {
-		http.Error(writer, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -100,57 +153,7 @@ func (w *websocketFactory) upgradeHTTP(writer http.ResponseWriter, request *http
 	<-connCloseSignal
 }
 
-func (w *websocketFactory) Listen(options *transport.Options) (transport.Acceptor, error) {
-
-	if err := w.Schemes().FixedURL(options.Address); nil != err {
-		return nil, err
-	}
-
-	_ = w.Close()
-
-	listen, err := net.Listen("tcp", options.AddressWithoutHost())
-	if nil != err {
-		return nil, err
-	}
-
-	w.wsOptions = FromContext(options.Context, DefaultOptions)
-	w.incoming = make(chan acceptEvent, 128)
-	w.httpServer = &http.Server{Addr: listen.Addr().String(), Handler: w.wsOptions.ServeMux}
-	w.closedSignal = make(chan struct{})
-
-	var routers = []string{options.Address.Path}
-	if len(w.wsOptions.Routers) > 0 {
-		routers = w.wsOptions.Routers
-	}
-
-	for _, router := range routers {
-		w.wsOptions.ServeMux.HandleFunc(router, w.upgradeHTTP)
-	}
-
-	errorChan := make(chan error, 1)
-
-	go func() {
-		switch options.Address.Scheme {
-		case "ws":
-			errorChan <- w.httpServer.Serve(listen)
-		case "wss":
-			errorChan <- w.httpServer.ServeTLS(listen, w.wsOptions.Cert, w.wsOptions.Key)
-		}
-	}()
-
-	// temporary plan
-	// waiting for server initialization
-	time.Sleep(time.Second)
-
-	select {
-	case err := <-errorChan:
-		return nil, err
-	default:
-		return w, nil
-	}
-}
-
-func (w *websocketFactory) Accept() (transport.Transport, error) {
+func (w *wsAcceptor) Accept() (transport.Transport, error) {
 
 	accept, ok := <-w.incoming
 	if !ok {
@@ -160,7 +163,7 @@ func (w *websocketFactory) Accept() (transport.Transport, error) {
 	return (&websocketTransport{conn: accept.conn.(*net.TCPConn), closer: accept.closer, path: accept.path, request: accept.request}).applyOptions(w.wsOptions, false)
 }
 
-func (w *websocketFactory) Close() error {
+func (w *wsAcceptor) Close() error {
 
 	if nil == w.closedSignal {
 		return nil

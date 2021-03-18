@@ -17,10 +17,10 @@
 package quic
 
 import (
-	"errors"
+	"net"
+
 	"github.com/go-netty/go-netty/transport"
 	"github.com/marten-seemann/quic-conn"
-	"net"
 )
 
 // New quic transport factory
@@ -28,10 +28,7 @@ func New() transport.Factory {
 	return new(quicFactory)
 }
 
-type quicFactory struct {
-	listener net.Listener
-	options  *Options
-}
+type quicFactory struct{}
 
 func (qf *quicFactory) Schemes() transport.Schemes {
 	return transport.Schemes{"quic"}
@@ -59,8 +56,6 @@ func (qf *quicFactory) Listen(options *transport.Options) (transport.Acceptor, e
 		return nil, err
 	}
 
-	_ = qf.Close()
-
 	quicOptions := FromContext(options.Context, DefaultOptions)
 
 	l, err := quicconn.Listen("udp", options.AddressWithoutHost(), quicOptions.TLS)
@@ -68,29 +63,28 @@ func (qf *quicFactory) Listen(options *transport.Options) (transport.Acceptor, e
 		return nil, err
 	}
 
-	qf.listener = l
-	qf.options = quicOptions
-	return qf, nil
+	return &quicAcceptor{listener: l, options: quicOptions}, nil
 }
 
-func (qf *quicFactory) Accept() (transport.Transport, error) {
+type quicAcceptor struct {
+	listener net.Listener
+	options  *Options
+}
 
-	if nil == qf.listener {
-		return nil, errors.New("no listener")
-	}
+func (q *quicAcceptor) Accept() (transport.Transport, error) {
 
-	conn, err := qf.listener.Accept()
+	conn, err := q.listener.Accept()
 	if nil != err {
 		return nil, err
 	}
 
-	return (&quicTransport{Conn: conn}).applyOptions(qf.options, false)
+	return (&quicTransport{Conn: conn}).applyOptions(q.options, false)
 }
 
-func (qf *quicFactory) Close() error {
-	if qf.listener != nil {
-		defer func() { qf.listener = nil }()
-		return qf.listener.Close()
+func (q *quicAcceptor) Close() error {
+	if q.listener != nil {
+		defer func() { q.listener = nil }()
+		return q.listener.Close()
 	}
 	return nil
 }
