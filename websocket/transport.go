@@ -129,21 +129,20 @@ func (t *websocketTransport) mode() ws.OpCode {
 
 func (t *websocketTransport) buildFrame(buffs [][]byte) (frame ws.Frame) {
 
-	// 二进制 & 文本模式
+	// new websocket frame
 	frame = ws.NewFrame(t.mode(), true, nil)
 
-	// 客户端需要对数据进行编码操作
+	// XOR cipher to the payload using mask
 	if t.state.ClientSide() {
 		frame.Header.Masked = true
 		frame.Header.Mask = ws.NewMask()
 	}
 
 	for _, buf := range buffs {
-		frame.Header.Length += int64(len(buf))
-
 		if frame.Header.Masked {
-			ws.Cipher(buf, frame.Header.Mask, 0)
+			ws.Cipher(buf, frame.Header.Mask, int(frame.Header.Length))
 		}
+		frame.Header.Length += int64(len(buf))
 	}
 
 	return
