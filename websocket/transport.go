@@ -34,6 +34,8 @@ type websocketTransport struct {
 	state   ws.State
 	path    string
 	request *http.Request
+	hdr     ws.Header
+	reader  *wsutil.Reader
 }
 
 func (t *websocketTransport) Path() string {
@@ -42,22 +44,29 @@ func (t *websocketTransport) Path() string {
 
 func (t *websocketTransport) Read(p []byte) (n int, err error) {
 
-	hdr, reader, err := t.nextPacket(ws.OpText | ws.OpBinary)
-	if nil != err {
-		if io.EOF == err && nil == reader {
-			return 0, io.ErrUnexpectedEOF
+	if nil == t.reader {
+		t.hdr, t.reader, err = t.nextPacket(ws.OpText | ws.OpBinary)
+		if nil != err {
+			if io.EOF == err && nil == t.reader {
+				// connection closed
+				return 0, io.ErrUnexpectedEOF
+			}
+			return 0, err
 		}
-		return 0, err
 	}
 
-	if n, err = reader.Read(p); nil != err {
+	if int64(len(p)) < t.hdr.Length {
+		err = io.ErrShortBuffer
 		return
 	}
 
-	if int64(n) < hdr.Length {
-		if err = reader.Discard(); nil == err {
-			err = io.ErrShortBuffer
-		}
+	p = p[:t.hdr.Length]
+	n, err = io.ReadFull(t.reader, p)
+	if n == len(p) {
+		t.hdr = ws.Header{}
+		t.reader = nil
+		// read completed
+		err = io.EOF
 	}
 
 	return
