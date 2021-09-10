@@ -73,6 +73,14 @@ func (t *websocketTransport) Read(p []byte) (n int, err error) {
 }
 
 func (t *websocketTransport) Write(p []byte) (n int, err error) {
+
+	// copy buffer on client side
+	if t.state.ClientSide() {
+		buf := make([]byte, len(p))
+		copy(buf, p)
+		p = buf
+	}
+
 	frame := t.buildFrame([][]byte{p})
 	return len(p), ws.WriteFrame(t.conn, frame)
 }
@@ -98,6 +106,16 @@ func (t *websocketTransport) Writev(buffs transport.Buffers) (int64, error) {
 
 		pkt := buffs.Buffers[i:j]
 		i = j
+
+		// copy buffer on client side
+		if t.state.ClientSide() {
+			buffs := make([][]byte, len(pkt))
+			for index := range pkt {
+				buffs[index] = make([]byte, len(pkt[index]))
+				copy(buffs[index], pkt[index])
+			}
+			pkt = buffs
+		}
 
 		var header = [ws.MaxHeaderSize]byte{}
 		headerWriter := bytes.NewBuffer(header[:])
