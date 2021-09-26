@@ -28,7 +28,7 @@ import (
 )
 
 type websocketTransport struct {
-	conn    *net.TCPConn
+	conn    net.Conn
 	closer  func() error
 	options *Options
 	state   ws.State

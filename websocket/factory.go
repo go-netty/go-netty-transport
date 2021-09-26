@@ -54,7 +54,7 @@ func (w *websocketFactory) Connect(options *transport.Options) (transport.Transp
 		return nil, err
 	}
 
-	return (&websocketTransport{conn: conn.(*net.TCPConn), closer: conn.Close, path: u.Path}).applyOptions(wsOptions, true)
+	return (&websocketTransport{conn: conn, closer: conn.Close, path: u.Path}).applyOptions(wsOptions, true)
 }
 
 func (w *websocketFactory) Listen(options *transport.Options) (transport.Acceptor, error) {
@@ -160,7 +160,7 @@ func (w *wsAcceptor) Accept() (transport.Transport, error) {
 		return nil, errors.New("server has been closed")
 	}
 
-	return (&websocketTransport{conn: accept.conn.(*net.TCPConn), closer: accept.closer, path: accept.path, request: accept.request}).applyOptions(w.wsOptions, false)
+	return (&websocketTransport{conn: accept.conn, closer: accept.closer, path: accept.path, request: accept.request}).applyOptions(w.wsOptions, false)
 }
 
 func (w *wsAcceptor) Close() error {
