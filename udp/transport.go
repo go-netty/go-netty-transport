@@ -18,10 +18,11 @@ package udp
 
 import (
 	"fmt"
-	"github.com/go-netty/go-netty/transport"
 	"io"
 	"io/ioutil"
 	"net"
+
+	"github.com/go-netty/go-netty/transport"
 )
 
 func newUDPClientTransport(conn *net.UDPConn) *udpClientTransport {
@@ -75,6 +76,7 @@ type udpServerTransport struct {
 	raddr         *net.UDPAddr
 	receivedQueue chan []byte
 	closed        chan struct{}
+	recvPkt       []byte
 }
 
 func (u *udpServerTransport) RemoteAddr() net.Addr {
@@ -113,20 +115,28 @@ func (u *udpServerTransport) Write(data []byte) (int, error) {
 	return u.UDPConn.WriteToUDP(data, u.raddr)
 }
 
-func (u *udpServerTransport) Read(data []byte) (n int, err error) {
+func (u *udpServerTransport) Read(p []byte) (n int, err error) {
 
-	packet, ok := <-u.receivedQueue
-	if !ok {
-		return 0, fmt.Errorf("broken pipe")
+	if nil != u.recvPkt {
+		packet, ok := <-u.receivedQueue
+		if !ok {
+			return 0, fmt.Errorf("broken pipe")
+		}
+		u.recvPkt = packet
 	}
 
-	if n = copy(data, packet); len(packet) != n {
-		err = io.ErrShortBuffer
-	} else {
-		err = io.EOF
+	if len(p) < len(u.recvPkt) {
+		return 0, fmt.Errorf("%w: want: %d, got: %d", io.ErrShortBuffer, len(u.recvPkt), len(p))
 	}
 
-	return
+	if length := len(u.recvPkt); len(p) > length {
+		p = p[:length]
+	}
+
+	n = copy(p, u.recvPkt)
+	// read completed
+	u.recvPkt = nil
+	return n, io.EOF
 }
 
 func (u *udpServerTransport) Flush() error {

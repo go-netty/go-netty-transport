@@ -22,7 +22,7 @@ import (
 	"strings"
 
 	"github.com/go-netty/go-netty/transport"
-	"github.com/xtaci/kcp-go"
+	"github.com/xtaci/kcp-go/v5"
 	"golang.org/x/crypto/pbkdf2"
 )
 

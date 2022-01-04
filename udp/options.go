@@ -18,6 +18,7 @@ package udp
 
 import (
 	"context"
+
 	"github.com/go-netty/go-netty/transport"
 )
 
@@ -25,12 +26,14 @@ import (
 var DefaultOptions = &Options{
 	MaxPacketSize: 1400,
 	MaxBacklog:    16,
+	ReusePort:     false,
 }
 
 // Options to define the udp
 type Options struct {
 	MaxPacketSize int32 `json:"max-packet-size"`
 	MaxBacklog    int32 `json:"max-backlog"`
+	ReusePort     bool  `json:"reuse-port"`
 }
 
 var contextKey = struct{ key string }{"go-netty-transport-udp-options"}

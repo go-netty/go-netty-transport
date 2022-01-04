@@ -18,9 +18,11 @@ package websocket
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/go-netty/go-netty/transport"
 	"github.com/gobwas/ws"
@@ -56,7 +58,7 @@ func (t *websocketTransport) Read(p []byte) (n int, err error) {
 	}
 
 	if int64(len(p)) < t.hdr.Length {
-		err = io.ErrShortBuffer
+		err = fmt.Errorf("%w: want: %d, got: %d", io.ErrShortBuffer, t.hdr.Length, len(p))
 		return
 	}
 
@@ -83,6 +85,18 @@ func (t *websocketTransport) Write(p []byte) (n int, err error) {
 
 	frame := t.buildFrame([][]byte{p})
 	return len(p), ws.WriteFrame(t.conn, frame)
+}
+
+func (t *websocketTransport) SetDeadline(time time.Time) error {
+	return t.conn.SetDeadline(time)
+}
+
+func (t *websocketTransport) SetReadDeadline(time time.Time) error {
+	return t.conn.SetReadDeadline(time)
+}
+
+func (t *websocketTransport) SetWriteDeadline(time time.Time) error {
+	return t.conn.SetWriteDeadline(time)
 }
 
 func (t *websocketTransport) LocalAddr() net.Addr {

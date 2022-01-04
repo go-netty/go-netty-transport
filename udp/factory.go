@@ -18,8 +18,10 @@ package udp
 
 import (
 	"fmt"
-	"github.com/go-netty/go-netty/transport"
 	"net"
+
+	"github.com/go-netty/go-netty/transport"
+	"github.com/libp2p/go-reuseport"
 )
 
 // New udp transport factory
@@ -39,17 +41,19 @@ func (u *udpFactory) Connect(options *transport.Options) (transport.Transport, e
 		return nil, err
 	}
 
-	dailAddr, err := net.ResolveUDPAddr(options.Address.Scheme, options.Address.Host)
+	udpOptions := FromContext(options.Context, DefaultOptions)
+
+	d := net.Dialer{}
+	if udpOptions.ReusePort {
+		d.Control = reuseport.Control
+	}
+
+	conn, err := d.Dial(options.Address.Scheme, options.Address.Host)
 	if nil != err {
 		return nil, err
 	}
 
-	conn, err := net.DialUDP(options.Address.Scheme, nil, dailAddr)
-	if nil != err {
-		return nil, err
-	}
-
-	return newUDPClientTransport(conn), nil
+	return newUDPClientTransport(conn.(*net.UDPConn)), nil
 }
 
 func (u *udpFactory) Listen(options *transport.Options) (transport.Acceptor, error) {
@@ -58,20 +62,20 @@ func (u *udpFactory) Listen(options *transport.Options) (transport.Acceptor, err
 		return nil, err
 	}
 
-	listenAddr, err := net.ResolveUDPAddr(options.Address.Scheme, options.Address.Host)
-	if nil != err {
-		return nil, err
-	}
-
-	l, err := net.ListenUDP(options.Address.Scheme, listenAddr)
-	if nil != err {
-		return nil, err
-	}
-
 	udpOptions := FromContext(options.Context, DefaultOptions)
 
+	lc := net.ListenConfig{}
+	if udpOptions.ReusePort {
+		lc.Control = reuseport.Control
+	}
+
+	l, err := lc.ListenPacket(options.Context, options.Address.Scheme, options.AddressWithoutHost())
+	if nil != err {
+		return nil, err
+	}
+
 	ua := &udpAcceptor{
-		listener:   l,
+		listener:   l.(*net.UDPConn),
 		options:    udpOptions,
 		transports: make(map[string]*udpServerTransport),
 		incoming:   make(chan *udpServerTransport, udpOptions.MaxBacklog),

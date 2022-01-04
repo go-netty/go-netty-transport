@@ -18,7 +18,7 @@ package kcp
 
 import (
 	"github.com/go-netty/go-netty/transport"
-	"github.com/xtaci/kcp-go"
+	"github.com/xtaci/kcp-go/v5"
 )
 
 // New a kcp transport factory
