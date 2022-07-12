@@ -19,24 +19,24 @@ package websocket
 import (
 	"context"
 	"net/http"
-	"time"
 
 	"github.com/go-netty/go-netty/transport"
+	"github.com/gobwas/ws"
 )
 
 // DefaultOptions default websocket options
 var DefaultOptions = &Options{
-	Timeout:  time.Second * 5,
+	Dialer:   ws.DefaultDialer,
 	ServeMux: http.DefaultServeMux,
 }
 
 // Options to define the websocket
 type Options struct {
-	Timeout  time.Duration  `json:"timeout"`
 	Cert     string         `json:"cert"`
 	Key      string         `json:"key"`
 	Binary   bool           `json:"binary,string"`
 	Routers  []string       `json:"routers"`
+	Dialer   ws.Dialer      `json:"-"`
 	ServeMux *http.ServeMux `json:"-"`
 }
 
