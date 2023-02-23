@@ -95,14 +95,12 @@ func (w *websocketFactory) Listen(options *transport.Options) (transport.Accepto
 		}
 	}()
 
-	// temporary plan
-	// waiting for server initialization
-	time.Sleep(time.Second)
-
 	select {
 	case err := <-errorChan:
 		return nil, err
-	default:
+	case <-time.After(time.Second):
+		// temporary plan
+		// waiting for server initialization
 		return wa, nil
 	}
 }
