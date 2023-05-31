@@ -20,7 +20,7 @@ import (
 	"net"
 
 	"github.com/go-netty/go-netty/transport"
-	"github.com/marten-seemann/quic-conn"
+	"github.com/smallnest/quick"
 )
 
 // New quic transport factory
@@ -42,7 +42,7 @@ func (qf *quicFactory) Connect(options *transport.Options) (transport.Transport,
 
 	quicOptions := FromContext(options.Context, DefaultOptions)
 
-	conn, err := quicconn.Dial(options.Address.Host, quicOptions.TLS)
+	conn, err := quick.Dial(options.Address.Host, quicOptions.TLS, quicOptions.Config)
 	if nil != err {
 		return nil, err
 	}
@@ -58,7 +58,7 @@ func (qf *quicFactory) Listen(options *transport.Options) (transport.Acceptor, e
 
 	quicOptions := FromContext(options.Context, DefaultOptions)
 
-	l, err := quicconn.Listen("udp", options.AddressWithoutHost(), quicOptions.TLS)
+	l, err := quick.Listen("udp", options.AddressWithoutHost(), quicOptions.TLS, quicOptions.Config)
 	if nil != err {
 		return nil, err
 	}

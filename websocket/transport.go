@@ -31,17 +31,15 @@ import (
 
 type websocketTransport struct {
 	conn    net.Conn
-	closer  func() error
 	options *Options
 	state   ws.State
-	path    string
 	request *http.Request
 	hdr     ws.Header
 	reader  *wsutil.Reader
 }
 
 func (t *websocketTransport) Path() string {
-	return t.path
+	return t.request.URL.Path
 }
 
 func (t *websocketTransport) Read(p []byte) (n int, err error) {
@@ -108,7 +106,7 @@ func (t *websocketTransport) RemoteAddr() net.Addr {
 }
 
 func (t *websocketTransport) Close() error {
-	return t.closer()
+	return t.conn.Close()
 }
 
 func (t *websocketTransport) Writev(buffs transport.Buffers) (int64, error) {
@@ -123,12 +121,12 @@ func (t *websocketTransport) Writev(buffs transport.Buffers) (int64, error) {
 
 		// copy buffer on client side
 		if t.state.ClientSide() {
-			buffs := make([][]byte, len(pkt))
+			buffVec := make([][]byte, len(pkt))
 			for index := range pkt {
-				buffs[index] = make([]byte, len(pkt[index]))
-				copy(buffs[index], pkt[index])
+				buffVec[index] = make([]byte, len(pkt[index]))
+				copy(buffVec[index], pkt[index])
 			}
-			pkt = buffs
+			pkt = buffVec
 		}
 
 		var header = [ws.MaxHeaderSize]byte{}

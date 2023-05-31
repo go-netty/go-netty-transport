@@ -19,6 +19,7 @@ package tls
 import (
 	"context"
 	"crypto/tls"
+
 	"github.com/go-netty/go-netty/transport"
 )
 
@@ -50,19 +51,19 @@ func (o *Options) Apply() *Options {
 	return o
 }
 
-var contextKey = struct{ key string }{"go-netty-transport-tls-options"}
+type contextKey struct{}
 
 // WithOptions to wrap the tls options
 func WithOptions(option *Options) transport.Option {
 	return func(options *transport.Options) error {
-		options.Context = context.WithValue(options.Context, contextKey, option.Apply())
+		options.Context = context.WithValue(options.Context, contextKey{}, option.Apply())
 		return nil
 	}
 }
 
 // FromContext to unwrap the tls options
 func FromContext(ctx context.Context, def *Options) *Options {
-	if v, ok := ctx.Value(contextKey).(*Options); ok {
+	if v, ok := ctx.Value(contextKey{}).(*Options); ok {
 		return v
 	}
 	return def

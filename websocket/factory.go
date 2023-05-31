@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/go-netty/go-netty/transport"
-	"github.com/gobwas/ws"
 )
 
 // New websocket transport factory
@@ -46,13 +45,13 @@ func (w *websocketFactory) Connect(options *transport.Options) (transport.Transp
 
 	wsOptions := FromContext(options.Context, DefaultOptions)
 
-	u := url.URL{Scheme: options.Address.Scheme, Host: options.Address.Host, Path: options.Address.Path}
+	u := &url.URL{Scheme: options.Address.Scheme, Host: options.Address.Host, Path: options.Address.Path}
 	conn, _, _, err := wsOptions.Dialer.Dial(options.Context, u.String())
 	if nil != err {
 		return nil, err
 	}
 
-	return (&websocketTransport{conn: conn, closer: conn.Close, path: u.Path}).applyOptions(wsOptions, true)
+	return (&websocketTransport{conn: conn, request: &http.Request{URL: u}}).applyOptions(wsOptions, true)
 }
 
 func (w *websocketFactory) Listen(options *transport.Options) (transport.Acceptor, error) {
@@ -96,7 +95,7 @@ func (w *websocketFactory) Listen(options *transport.Options) (transport.Accepto
 	}()
 
 	select {
-	case err := <-errorChan:
+	case err = <-errorChan:
 		return nil, err
 	case <-time.After(time.Second):
 		// temporary plan
@@ -107,7 +106,6 @@ func (w *websocketFactory) Listen(options *transport.Options) (transport.Accepto
 
 type acceptEvent struct {
 	conn    net.Conn
-	closer  func() error
 	path    string
 	request *http.Request
 }
@@ -121,32 +119,18 @@ type wsAcceptor struct {
 
 func (w *wsAcceptor) upgradeHTTP(writer http.ResponseWriter, request *http.Request) {
 
-	conn, _, _, err := ws.UpgradeHTTP(request, writer)
-	if conn != nil {
-		defer conn.Close()
-	}
-
+	conn, _, _, err := w.wsOptions.Upgrader.Upgrade(request, writer)
 	if nil != err {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	connCloseSignal := make(chan struct{})
 
 	select {
 	case <-w.closedSignal:
 		return
-	case w.incoming <- acceptEvent{conn: conn, closer: func() error {
-		select {
-		case <-connCloseSignal:
-		default:
-			close(connCloseSignal)
-		}
-		return nil
-	}, path: request.URL.Path, request: request}:
+	case w.incoming <- acceptEvent{conn: conn, path: request.URL.Path, request: request}:
+		// post to acceptor
 	}
-
-	// waiting for connection to close
-	<-connCloseSignal
 }
 
 func (w *wsAcceptor) Accept() (transport.Transport, error) {
@@ -156,7 +140,7 @@ func (w *wsAcceptor) Accept() (transport.Transport, error) {
 		return nil, errors.New("server has been closed")
 	}
 
-	return (&websocketTransport{conn: accept.conn, closer: accept.closer, path: accept.path, request: accept.request}).applyOptions(w.wsOptions, false)
+	return (&websocketTransport{conn: accept.conn, request: accept.request}).applyOptions(w.wsOptions, false)
 }
 
 func (w *wsAcceptor) Close() error {

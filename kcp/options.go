@@ -117,19 +117,19 @@ func (o *Options) Apply() *Options {
 	return o
 }
 
-var contextKey = struct{ key string }{"go-netty-transport-kcp-options"}
+type contextKey struct{}
 
 // WithOptions to wrap the kcp options
 func WithOptions(option *Options) transport.Option {
 	return func(options *transport.Options) error {
-		options.Context = context.WithValue(options.Context, contextKey, option.Apply())
+		options.Context = context.WithValue(options.Context, contextKey{}, option.Apply())
 		return nil
 	}
 }
 
 // FromContext to unwrap the kcp options
 func FromContext(ctx context.Context, def *Options) *Options {
-	if v, ok := ctx.Value(contextKey).(*Options); ok {
+	if v, ok := ctx.Value(contextKey{}).(*Options); ok {
 		return v
 	}
 	return def

@@ -21,6 +21,7 @@ import (
 	"crypto/tls"
 
 	"github.com/go-netty/go-netty/transport"
+	"github.com/quic-go/quic-go"
 )
 
 // DefaultOptions default quic options
@@ -28,6 +29,7 @@ var DefaultOptions = &Options{}
 
 // Options to define the quic
 type Options struct {
+	Config   *quic.Config
 	TLS      *tls.Config
 	CertFile string
 	KeyFile  string
@@ -49,19 +51,19 @@ func (o *Options) Apply() *Options {
 	return o
 }
 
-var contextKey = struct{ key string }{"go-netty-transport-quic-options"}
+type contextKey struct{}
 
 // WithOptions to wrap the quic options
 func WithOptions(option *Options) transport.Option {
 	return func(options *transport.Options) error {
-		options.Context = context.WithValue(options.Context, contextKey, option.Apply())
+		options.Context = context.WithValue(options.Context, contextKey{}, option.Apply())
 		return nil
 	}
 }
 
 // FromContext to unwrap the quic options
 func FromContext(ctx context.Context, def *Options) *Options {
-	if v, ok := ctx.Value(contextKey).(*Options); ok {
+	if v, ok := ctx.Value(contextKey{}).(*Options); ok {
 		return v
 	}
 	return def

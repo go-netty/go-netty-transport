@@ -27,32 +27,34 @@ import (
 // DefaultOptions default websocket options
 var DefaultOptions = &Options{
 	Dialer:   ws.DefaultDialer,
+	Upgrader: ws.DefaultHTTPUpgrader,
 	ServeMux: http.DefaultServeMux,
 }
 
 // Options to define the websocket
 type Options struct {
-	Cert     string         `json:"cert"`
-	Key      string         `json:"key"`
-	Binary   bool           `json:"binary,string"`
-	Routers  []string       `json:"routers"`
-	Dialer   ws.Dialer      `json:"-"`
-	ServeMux *http.ServeMux `json:"-"`
+	Cert     string          `json:"cert"`
+	Key      string          `json:"key"`
+	Binary   bool            `json:"binary,string"`
+	Routers  []string        `json:"routers"`
+	Dialer   ws.Dialer       `json:"-"`
+	Upgrader ws.HTTPUpgrader `json:"-"`
+	ServeMux *http.ServeMux  `json:"-"`
 }
 
-var contextKey = struct{ key string }{"go-netty-transport-websocket-options"}
+type contextKey struct{}
 
 // WithOptions to wrap the websocket options
 func WithOptions(option *Options) transport.Option {
 	return func(options *transport.Options) error {
-		options.Context = context.WithValue(options.Context, contextKey, option)
+		options.Context = context.WithValue(options.Context, contextKey{}, option)
 		return nil
 	}
 }
 
 // FromContext to unwrap the websocket options
 func FromContext(ctx context.Context, def *Options) *Options {
-	if v, ok := ctx.Value(contextKey).(*Options); ok {
+	if v, ok := ctx.Value(contextKey{}).(*Options); ok {
 		return v
 	}
 	return def
