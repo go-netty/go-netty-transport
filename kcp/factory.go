@@ -34,7 +34,7 @@ func (*kcpFactory) Schemes() transport.Schemes {
 
 func (f *kcpFactory) Connect(options *transport.Options) (transport.Transport, error) {
 
-	if err := f.Schemes().FixedURL(options.Address); nil != err {
+	if err := f.Schemes().FixScheme(options.Address); nil != err {
 		return nil, err
 	}
 
@@ -45,12 +45,12 @@ func (f *kcpFactory) Connect(options *transport.Options) (transport.Transport, e
 		return nil, err
 	}
 
-	return (&kcpTransport{UDPSession: conn}).applyOptions(kcpOptions, true)
+	return newKcpTransport(conn, kcpOptions, true)
 }
 
 func (f *kcpFactory) Listen(options *transport.Options) (transport.Acceptor, error) {
 
-	if err := f.Schemes().FixedURL(options.Address); nil != err {
+	if err := f.Schemes().FixScheme(options.Address); nil != err {
 		return nil, err
 	}
 
@@ -90,7 +90,7 @@ func (k *kcpAcceptor) Accept() (transport.Transport, error) {
 		return nil, err
 	}
 
-	return (&kcpTransport{UDPSession: conn}).applyOptions(k.options, false)
+	return newKcpTransport(conn, k.options, false)
 }
 
 func (k *kcpAcceptor) Close() error {

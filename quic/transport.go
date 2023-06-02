@@ -17,26 +17,19 @@
 package quic
 
 import (
-	"github.com/go-netty/go-netty/transport"
 	"net"
+
+	"github.com/go-netty/go-netty/transport"
 )
 
 type quicTransport struct {
-	net.Conn
+	transport.Buffered
+	client bool
 }
 
-func (qt *quicTransport) Writev(buffs transport.Buffers) (n int64, err error) {
-	return buffs.Buffers.WriteTo(qt)
-}
-
-func (qt *quicTransport) Flush() error {
-	return nil
-}
-
-func (qt *quicTransport) RawTransport() interface{} {
-	return qt.Conn
-}
-
-func (qt *quicTransport) applyOptions(quicOptions *Options, client bool) (*quicTransport, error) {
-	return qt, nil
+func newQuicTransport(conn net.Conn, quicOptions *Options, client bool) (*quicTransport, error) {
+	return &quicTransport{
+		Buffered: transport.NewBuffered(conn, quicOptions.ReadBufferSize, quicOptions.WriteBufferSize),
+		client:   client,
+	}, nil
 }

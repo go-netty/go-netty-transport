@@ -30,9 +30,11 @@ var DefaultOptions = &Options{
 
 // Options to define the tls
 type Options struct {
-	TLS      *tls.Config
-	CertFile string
-	KeyFile  string
+	CertFile        string      `json:"certFile"`
+	KeyFile         string      `json:"keyFile"`
+	ReadBufferSize  int         `json:"readBufferSize"`
+	WriteBufferSize int         `json:"writeBufferSize"`
+	TLS             *tls.Config `json:"-"`
 }
 
 func (o *Options) Apply() *Options {

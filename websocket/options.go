@@ -26,6 +26,7 @@ import (
 
 // DefaultOptions default websocket options
 var DefaultOptions = &Options{
+	OpCode:   ws.OpText,
 	Dialer:   ws.DefaultDialer,
 	Upgrader: ws.DefaultHTTPUpgrader,
 	ServeMux: http.DefaultServeMux,
@@ -33,13 +34,17 @@ var DefaultOptions = &Options{
 
 // Options to define the websocket
 type Options struct {
-	Cert     string          `json:"cert"`
-	Key      string          `json:"key"`
-	Binary   bool            `json:"binary,string"`
-	Routers  []string        `json:"routers"`
-	Dialer   ws.Dialer       `json:"-"`
-	Upgrader ws.HTTPUpgrader `json:"-"`
-	ServeMux *http.ServeMux  `json:"-"`
+	Cert            string          `json:"cert"`
+	Key             string          `json:"key"`
+	OpCode          ws.OpCode       `json:"opCode"`
+	Routers         []string        `json:"routers"`
+	CheckUTF8       bool            `json:"checkUTF8"`
+	MaxFrameSize    int64           `json:"maxFrameSize"`
+	ReadBufferSize  int             `json:"readBufferSize"`
+	WriteBufferSize int             `json:"writeBufferSize"`
+	Dialer          ws.Dialer       `json:"-"`
+	Upgrader        ws.HTTPUpgrader `json:"-"`
+	ServeMux        *http.ServeMux  `json:"-"`
 }
 
 type contextKey struct{}

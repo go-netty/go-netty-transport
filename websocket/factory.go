@@ -39,7 +39,7 @@ func (*websocketFactory) Schemes() transport.Schemes {
 
 func (w *websocketFactory) Connect(options *transport.Options) (transport.Transport, error) {
 
-	if err := w.Schemes().FixedURL(options.Address); nil != err {
+	if err := w.Schemes().FixScheme(options.Address); nil != err {
 		return nil, err
 	}
 
@@ -51,12 +51,12 @@ func (w *websocketFactory) Connect(options *transport.Options) (transport.Transp
 		return nil, err
 	}
 
-	return (&websocketTransport{conn: conn, request: &http.Request{URL: u}}).applyOptions(wsOptions, true)
+	return newWebsocketTransport(conn, &http.Request{URL: u}, wsOptions, true)
 }
 
 func (w *websocketFactory) Listen(options *transport.Options) (transport.Acceptor, error) {
 
-	if err := w.Schemes().FixedURL(options.Address); nil != err {
+	if err := w.Schemes().FixScheme(options.Address); nil != err {
 		return nil, err
 	}
 
@@ -127,6 +127,7 @@ func (w *wsAcceptor) upgradeHTTP(writer http.ResponseWriter, request *http.Reque
 
 	select {
 	case <-w.closedSignal:
+		_ = conn.Close()
 		return
 	case w.incoming <- acceptEvent{conn: conn, path: request.URL.Path, request: request}:
 		// post to acceptor
@@ -135,12 +136,12 @@ func (w *wsAcceptor) upgradeHTTP(writer http.ResponseWriter, request *http.Reque
 
 func (w *wsAcceptor) Accept() (transport.Transport, error) {
 
-	accept, ok := <-w.incoming
+	ev, ok := <-w.incoming
 	if !ok {
 		return nil, errors.New("server has been closed")
 	}
 
-	return (&websocketTransport{conn: accept.conn, request: accept.request}).applyOptions(w.wsOptions, false)
+	return newWebsocketTransport(ev.conn, ev.request, w.wsOptions, false)
 }
 
 func (w *wsAcceptor) Close() error {

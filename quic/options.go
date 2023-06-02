@@ -29,10 +29,12 @@ var DefaultOptions = &Options{}
 
 // Options to define the quic
 type Options struct {
-	Config   *quic.Config
-	TLS      *tls.Config
-	CertFile string
-	KeyFile  string
+	CertFile        string       `json:"certFile"`
+	KeyFile         string       `json:"keyFile"`
+	ReadBufferSize  int          `json:"readBufferSize"`
+	WriteBufferSize int          `json:"writeBufferSize"`
+	Config          *quic.Config `json:"-"`
+	TLS             *tls.Config  `json:"-"`
 }
 
 func (o *Options) Apply() *Options {

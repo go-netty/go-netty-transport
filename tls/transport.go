@@ -18,21 +18,18 @@ package tls
 
 import (
 	"crypto/tls"
+
 	"github.com/go-netty/go-netty/transport"
 )
 
 type tlsTransport struct {
-	*tls.Conn
+	transport.Buffered
+	client bool
 }
 
-func (t *tlsTransport) Writev(buffs transport.Buffers) (int64, error) {
-	return buffs.Buffers.WriteTo(t.Conn)
-}
-
-func (t *tlsTransport) Flush() error {
-	return nil
-}
-
-func (t *tlsTransport) RawTransport() interface{} {
-	return t.Conn
+func newTlsTransport(conn *tls.Conn, tlsOptions *Options, client bool) (*tlsTransport, error) {
+	return &tlsTransport{
+		Buffered: transport.NewBuffered(conn, tlsOptions.ReadBufferSize, tlsOptions.WriteBufferSize),
+		client:   client,
+	}, nil
 }

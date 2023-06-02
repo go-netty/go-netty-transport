@@ -37,7 +37,7 @@ func (*udpFactory) Schemes() transport.Schemes {
 
 func (u *udpFactory) Connect(options *transport.Options) (transport.Transport, error) {
 
-	if err := u.Schemes().FixedURL(options.Address); nil != err {
+	if err := u.Schemes().FixScheme(options.Address); nil != err {
 		return nil, err
 	}
 
@@ -58,7 +58,7 @@ func (u *udpFactory) Connect(options *transport.Options) (transport.Transport, e
 
 func (u *udpFactory) Listen(options *transport.Options) (transport.Acceptor, error) {
 
-	if err := u.Schemes().FixedURL(options.Address); nil != err {
+	if err := u.Schemes().FixScheme(options.Address); nil != err {
 		return nil, err
 	}
 

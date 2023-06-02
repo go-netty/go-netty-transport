@@ -17,59 +17,123 @@
 package websocket
 
 import (
-	"bytes"
-	"fmt"
+	"encoding/binary"
 	"io"
 	"net"
 	"net/http"
-	"time"
+	"sync"
 
 	"github.com/go-netty/go-netty/transport"
+	"github.com/go-netty/go-netty/utils"
 	"github.com/gobwas/ws"
+	"github.com/gobwas/ws/wsflate"
 	"github.com/gobwas/ws/wsutil"
 )
 
+var netBuffersPool = sync.Pool{
+	New: func() interface{} {
+		return make(net.Buffers, 0, 8)
+	},
+}
+
 type websocketTransport struct {
-	conn    net.Conn
-	options *Options
-	state   ws.State
-	request *http.Request
-	hdr     ws.Header
-	reader  *wsutil.Reader
+	transport.Buffered
+	options     *Options
+	state       ws.State  // StateClientSide or StateServerSide
+	opCode      ws.OpCode // OpText or OpBinary
+	request     *http.Request
+	hdr         *ws.Header
+	reader      *wsutil.Reader
+	writeLocker utils.SpinLocker
+	msgState    wsflate.MessageState
+}
+
+func newWebsocketTransport(conn net.Conn, request *http.Request, wsOptions *Options, client bool) (*websocketTransport, error) {
+	t := &websocketTransport{
+		Buffered: transport.NewBuffered(conn, wsOptions.ReadBufferSize, wsOptions.WriteBufferSize),
+		options:  wsOptions,
+		request:  request,
+	}
+
+	// setup opcode
+	if t.opCode = ws.OpText; 0 == (t.options.OpCode & ws.OpText) {
+		t.opCode = ws.OpBinary
+	}
+
+	// client or server
+	if t.state = ws.StateServerSide; client {
+		t.state = ws.StateClientSide
+	}
+	// message reader
+	t.reader = &wsutil.Reader{
+		Source:          t.Buffered,
+		State:           t.state | ws.StateExtended,
+		CheckUTF8:       wsOptions.CheckUTF8,
+		SkipHeaderCheck: false,
+		MaxFrameSize:    wsOptions.MaxFrameSize,
+		OnIntermediate:  wsutil.ControlFrameHandler(t.Buffered, t.state),
+		Extensions:      []wsutil.RecvExtension{&t.msgState},
+	}
+
+	return t, nil
 }
 
 func (t *websocketTransport) Path() string {
 	return t.request.URL.Path
 }
 
-func (t *websocketTransport) Read(p []byte) (n int, err error) {
+// Read implements io.Reader. It reads the next message payload into p.
+// It takes care on fragmented messages.
+//
+// The error is io.EOF only if all of message bytes were read.
+// If an io.EOF happens during reading some but not all the message bytes
+// Read() returns io.ErrUnexpectedEOF.
+//
+// The error is ErrNoFrameAdvance if no NextFrame() call was made before
+// reading next message bytes.
+func (t *websocketTransport) Read(p []byte) (int, error) {
 
-	if nil == t.reader {
-		t.hdr, t.reader, err = t.nextPacket(ws.OpText | ws.OpBinary)
-		if nil != err {
-			if io.EOF == err && nil == t.reader {
+	if nil == t.hdr {
+		for {
+			hdr, err := t.reader.NextFrame()
+			if nil != err {
 				// connection closed
-				return 0, io.ErrUnexpectedEOF
+				if io.EOF == err {
+					err = io.ErrUnexpectedEOF
+				}
+				return 0, err
 			}
-			return 0, err
+
+			if hdr.OpCode.IsControl() && t.reader.OnIntermediate != nil {
+				if err = t.reader.OnIntermediate(hdr, t.reader); nil != err {
+					return 0, err
+				}
+				continue
+			}
+
+			if 0 == (hdr.OpCode & t.options.OpCode) {
+				if err = t.reader.Discard(); nil != err {
+					// connection closed
+					if io.EOF == err {
+						err = io.ErrUnexpectedEOF
+					}
+					return 0, err
+				}
+				continue
+			}
+
+			t.hdr = &hdr
+			break
 		}
 	}
 
-	if int64(len(p)) < t.hdr.Length {
-		err = fmt.Errorf("%w: want: %d, got: %d", io.ErrShortBuffer, t.hdr.Length, len(p))
-		return
+	n, err := t.reader.Read(p)
+	if nil != err && io.EOF == err {
+		// all of message bytes were read
+		t.hdr = nil
 	}
 
-	p = p[:t.hdr.Length]
-	n, err = io.ReadFull(t.reader, p)
-	if n == len(p) {
-		t.hdr = ws.Header{}
-		t.reader = nil
-		// read completed
-		err = io.EOF
-	}
-
-	return
+	return n, err
 }
 
 func (t *websocketTransport) Write(p []byte) (n int, err error) {
@@ -81,37 +145,18 @@ func (t *websocketTransport) Write(p []byte) (n int, err error) {
 		p = buf
 	}
 
-	frame := t.buildFrame([][]byte{p})
-	return len(p), ws.WriteFrame(t.conn, frame)
-}
-
-func (t *websocketTransport) SetDeadline(time time.Time) error {
-	return t.conn.SetDeadline(time)
-}
-
-func (t *websocketTransport) SetReadDeadline(time time.Time) error {
-	return t.conn.SetReadDeadline(time)
-}
-
-func (t *websocketTransport) SetWriteDeadline(time time.Time) error {
-	return t.conn.SetWriteDeadline(time)
-}
-
-func (t *websocketTransport) LocalAddr() net.Addr {
-	return t.conn.LocalAddr()
-}
-
-func (t *websocketTransport) RemoteAddr() net.Addr {
-	return t.conn.RemoteAddr()
-}
-
-func (t *websocketTransport) Close() error {
-	return t.conn.Close()
+	t.writeLocker.Lock()
+	defer t.writeLocker.Unlock()
+	return len(p), ws.WriteFrame(t.Buffered, t.buildFrame([][]byte{p}))
 }
 
 func (t *websocketTransport) Writev(buffs transport.Buffers) (int64, error) {
+
 	// header1 + payload1 | header2 + payload2 | ...
-	var combineBuffers = make(net.Buffers, 0, len(buffs.Indexes)+len(buffs.Buffers))
+	var combineBuffers = netBuffersPool.Get().(net.Buffers)
+	defer netBuffersPool.Put(combineBuffers)
+	// reset buffer
+	combineBuffers = combineBuffers[:0]
 
 	var i = 0
 	for _, j := range buffs.Indexes {
@@ -129,47 +174,42 @@ func (t *websocketTransport) Writev(buffs transport.Buffers) (int64, error) {
 			pkt = buffVec
 		}
 
-		var header = [ws.MaxHeaderSize]byte{}
-		headerWriter := bytes.NewBuffer(header[:])
-		headerWriter.Reset()
-
 		frame := t.buildFrame(pkt)
-		if err := ws.WriteHeader(headerWriter, frame.Header); nil != err {
-			return 0, err
-		}
+
+		// pack packet header
+		var header = [ws.MaxHeaderSize]byte{}
+		var hn = packHeader(header[:], frame.Header)
 
 		// header
-		combineBuffers = append(combineBuffers, headerWriter.Bytes())
+		combineBuffers = append(combineBuffers, header[:hn])
 		// payload
 		combineBuffers = append(combineBuffers, pkt...)
 	}
 
-	return combineBuffers.WriteTo(t.conn)
+	t.writeLocker.Lock()
+	defer t.writeLocker.Unlock()
+	return combineBuffers.WriteTo(t.Buffered)
 }
 
-func (t *websocketTransport) Flush() error {
-	return nil
-}
+func (t *websocketTransport) WriteClose(code int, reason string) error {
+	closeFrame := ws.NewCloseFrame(ws.NewCloseFrameBody(ws.StatusCode(code), reason))
 
-func (t *websocketTransport) RawTransport() interface{} {
-	return t.conn
+	t.writeLocker.Lock()
+	defer t.writeLocker.Unlock()
+	if err := ws.WriteFrame(t.Buffered, closeFrame); nil != err {
+		return err
+	}
+	return t.Flush()
 }
 
 func (t *websocketTransport) HttpRequest() *http.Request {
 	return t.request
 }
 
-func (t *websocketTransport) mode() ws.OpCode {
-	if t.options.Binary {
-		return ws.OpBinary
-	}
-	return ws.OpText
-}
-
 func (t *websocketTransport) buildFrame(buffs [][]byte) (frame ws.Frame) {
 
 	// new websocket frame
-	frame = ws.NewFrame(t.mode(), true, nil)
+	frame = ws.NewFrame(t.opCode, true, nil)
 
 	// XOR cipher to the payload using mask
 	if t.state.ClientSide() {
@@ -187,50 +227,43 @@ func (t *websocketTransport) buildFrame(buffs [][]byte) (frame ws.Frame) {
 	return
 }
 
-func (t *websocketTransport) nextPacket(want ws.OpCode) (hdr ws.Header, reader *wsutil.Reader, err error) {
+func packHeader(bts []byte, h ws.Header) int {
+	const (
+		bit0  = 0x80
+		len7  = int64(125)
+		len16 = int64(^(uint16(0)))
+		len64 = int64(^(uint64(0)) >> 1)
+	)
 
-	controlHandler := wsutil.ControlFrameHandler(t.conn, t.state)
-	rd := &wsutil.Reader{
-		Source:          t.conn,
-		State:           t.state,
-		CheckUTF8:       !t.options.Binary,
-		SkipHeaderCheck: false,
-		OnIntermediate:  controlHandler,
+	if h.Fin {
+		bts[0] |= bit0
+	}
+	bts[0] |= h.Rsv << 4
+	bts[0] |= byte(h.OpCode)
+
+	var n int
+	switch {
+	case h.Length <= len7:
+		bts[1] = byte(h.Length)
+		n = 2
+
+	case h.Length <= len16:
+		bts[1] = 126
+		binary.BigEndian.PutUint16(bts[2:4], uint16(h.Length))
+		n = 4
+
+	case h.Length <= len64:
+		bts[1] = 127
+		binary.BigEndian.PutUint64(bts[2:10], uint64(h.Length))
+		n = 10
+
+	default:
+		panic(ws.ErrHeaderLengthUnexpected)
 	}
 
-	for {
-		// read frame.
-		hdr, err := rd.NextFrame()
-		if err != nil {
-			return hdr, nil, err
-		}
-
-		// handle websocket control frame.
-		if hdr.OpCode.IsControl() {
-			if err := controlHandler(hdr, rd); err != nil {
-				return hdr, nil, err
-			}
-			continue
-		}
-
-		// check frame.
-		if hdr.OpCode&want == 0 {
-			if err := rd.Discard(); err != nil {
-				return hdr, nil, err
-			}
-			continue
-		}
-
-		return hdr, rd, nil
+	if h.Masked {
+		bts[1] |= bit0
+		n += copy(bts[n:], h.Mask[:])
 	}
-}
-
-func (t *websocketTransport) applyOptions(wsOptions *Options, client bool) (*websocketTransport, error) {
-	// save options.
-	t.options = wsOptions
-	// client or server
-	if t.state = ws.StateServerSide; client {
-		t.state = ws.StateClientSide
-	}
-	return t, nil
+	return n
 }

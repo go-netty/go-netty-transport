@@ -19,8 +19,9 @@ package tls
 import (
 	"crypto/tls"
 	"errors"
-	"github.com/go-netty/go-netty/transport"
 	"net"
+
+	"github.com/go-netty/go-netty/transport"
 )
 
 // New a tls transport factory
@@ -36,7 +37,7 @@ func (t *tlsFactory) Schemes() transport.Schemes {
 
 func (t *tlsFactory) Connect(options *transport.Options) (transport.Transport, error) {
 
-	if err := t.Schemes().FixedURL(options.Address); nil != err {
+	if err := t.Schemes().FixScheme(options.Address); nil != err {
 		return nil, err
 	}
 
@@ -47,12 +48,12 @@ func (t *tlsFactory) Connect(options *transport.Options) (transport.Transport, e
 		return nil, err
 	}
 
-	return &tlsTransport{Conn: conn}, nil
+	return newTlsTransport(conn, tlsOptions, true)
 }
 
 func (t *tlsFactory) Listen(options *transport.Options) (transport.Acceptor, error) {
 
-	if err := t.Schemes().FixedURL(options.Address); nil != err {
+	if err := t.Schemes().FixScheme(options.Address); nil != err {
 		return nil, err
 	}
 
@@ -81,7 +82,7 @@ func (t *tlsAcceptor) Accept() (transport.Transport, error) {
 		return nil, err
 	}
 
-	return &tlsTransport{Conn: conn.(*tls.Conn)}, nil
+	return newTlsTransport(conn.(*tls.Conn), t.options, false)
 }
 
 func (t *tlsAcceptor) Close() error {

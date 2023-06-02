@@ -36,7 +36,7 @@ func (qf *quicFactory) Schemes() transport.Schemes {
 
 func (qf *quicFactory) Connect(options *transport.Options) (transport.Transport, error) {
 
-	if err := qf.Schemes().FixedURL(options.Address); nil != err {
+	if err := qf.Schemes().FixScheme(options.Address); nil != err {
 		return nil, err
 	}
 
@@ -47,12 +47,12 @@ func (qf *quicFactory) Connect(options *transport.Options) (transport.Transport,
 		return nil, err
 	}
 
-	return (&quicTransport{Conn: conn}).applyOptions(quicOptions, true)
+	return newQuicTransport(conn, quicOptions, true)
 }
 
 func (qf *quicFactory) Listen(options *transport.Options) (transport.Acceptor, error) {
 
-	if err := qf.Schemes().FixedURL(options.Address); nil != err {
+	if err := qf.Schemes().FixScheme(options.Address); nil != err {
 		return nil, err
 	}
 
@@ -78,7 +78,7 @@ func (q *quicAcceptor) Accept() (transport.Transport, error) {
 		return nil, err
 	}
 
-	return (&quicTransport{Conn: conn}).applyOptions(q.options, false)
+	return newQuicTransport(conn, q.options, false)
 }
 
 func (q *quicAcceptor) Close() error {

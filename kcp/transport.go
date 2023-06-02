@@ -23,6 +23,32 @@ import (
 
 type kcpTransport struct {
 	*kcp.UDPSession
+	client bool
+}
+
+func newKcpTransport(conn *kcp.UDPSession, kcpOptions *Options, client bool) (*kcpTransport, error) {
+	conn.SetStreamMode(true)
+	conn.SetWriteDelay(false)
+	conn.SetNoDelay(kcpOptions.NoDelay, kcpOptions.Interval, kcpOptions.Resend, kcpOptions.NoCongestion)
+	conn.SetMtu(kcpOptions.MTU)
+	conn.SetWindowSize(kcpOptions.SndWnd, kcpOptions.RcvWnd)
+	conn.SetACKNoDelay(kcpOptions.AckNodelay)
+
+	if client {
+		if err := conn.SetDSCP(kcpOptions.DSCP); nil != err {
+			return nil, err
+		}
+
+		if err := conn.SetReadBuffer(kcpOptions.SockBuf); nil != err {
+			return nil, err
+		}
+
+		if err := conn.SetWriteBuffer(kcpOptions.SockBuf); nil != err {
+			return nil, err
+		}
+	}
+
+	return &kcpTransport{UDPSession: conn, client: client}, nil
 }
 
 func (t *kcpTransport) Writev(buffs transport.Buffers) (int64, error) {
@@ -36,30 +62,4 @@ func (t *kcpTransport) Flush() error {
 
 func (t *kcpTransport) RawTransport() interface{} {
 	return t.UDPSession
-}
-
-func (t *kcpTransport) applyOptions(kcpOptions *Options, client bool) (*kcpTransport, error) {
-
-	t.SetStreamMode(true)
-	t.SetWriteDelay(false)
-	t.SetNoDelay(kcpOptions.NoDelay, kcpOptions.Interval, kcpOptions.Resend, kcpOptions.NoCongestion)
-	t.SetMtu(kcpOptions.MTU)
-	t.SetWindowSize(kcpOptions.SndWnd, kcpOptions.RcvWnd)
-	t.SetACKNoDelay(kcpOptions.AckNodelay)
-
-	if client {
-		if err := t.SetDSCP(kcpOptions.DSCP); nil != err {
-			return t, err
-		}
-
-		if err := t.SetReadBuffer(kcpOptions.SockBuf); nil != err {
-			return t, err
-		}
-
-		if err := t.SetWriteBuffer(kcpOptions.SockBuf); nil != err {
-			return t, err
-		}
-	}
-
-	return t, nil
 }
