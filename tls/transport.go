@@ -23,13 +23,13 @@ import (
 )
 
 type tlsTransport struct {
-	transport.Buffered
+	transport.Transport
 	client bool
 }
 
 func newTlsTransport(conn *tls.Conn, tlsOptions *Options, client bool) (*tlsTransport, error) {
 	return &tlsTransport{
-		Buffered: transport.NewBuffered(conn, tlsOptions.ReadBufferSize, tlsOptions.WriteBufferSize),
-		client:   client,
+		Transport: transport.NewTransport(conn, tlsOptions.ReadBufferSize, tlsOptions.WriteBufferSize),
+		client:    client,
 	}, nil
 }

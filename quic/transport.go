@@ -23,13 +23,13 @@ import (
 )
 
 type quicTransport struct {
-	transport.Buffered
+	transport.Transport
 	client bool
 }
 
 func newQuicTransport(conn net.Conn, quicOptions *Options, client bool) (*quicTransport, error) {
 	return &quicTransport{
-		Buffered: transport.NewBuffered(conn, quicOptions.ReadBufferSize, quicOptions.WriteBufferSize),
-		client:   client,
+		Transport: transport.NewTransport(conn, quicOptions.ReadBufferSize, quicOptions.WriteBufferSize),
+		client:    client,
 	}, nil
 }

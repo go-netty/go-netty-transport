@@ -19,40 +19,37 @@ package websocket
 import (
 	"encoding/binary"
 	"io"
+	"math/rand"
 	"net"
 	"net/http"
 	"sync"
 
 	"github.com/go-netty/go-netty/transport"
-	"github.com/go-netty/go-netty/utils"
+	"github.com/gobwas/pool/pbytes"
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsflate"
 	"github.com/gobwas/ws/wsutil"
 )
 
-var netBuffersPool = sync.Pool{
-	New: func() interface{} {
-		return make(net.Buffers, 0, 8)
-	},
-}
+var netBuffersPool sync.Pool
 
 type websocketTransport struct {
-	transport.Buffered
+	transport.Transport
 	options     *Options
 	state       ws.State  // StateClientSide or StateServerSide
 	opCode      ws.OpCode // OpText or OpBinary
 	request     *http.Request
-	hdr         *ws.Header
 	reader      *wsutil.Reader
-	writeLocker utils.SpinLocker
+	msgReading  bool
+	writeLocker sync.Mutex
 	msgState    wsflate.MessageState
 }
 
 func newWebsocketTransport(conn net.Conn, request *http.Request, wsOptions *Options, client bool) (*websocketTransport, error) {
 	t := &websocketTransport{
-		Buffered: transport.NewBuffered(conn, wsOptions.ReadBufferSize, wsOptions.WriteBufferSize),
-		options:  wsOptions,
-		request:  request,
+		Transport: transport.NewTransport(conn, wsOptions.ReadBufferSize, wsOptions.WriteBufferSize),
+		options:   wsOptions,
+		request:   request,
 	}
 
 	// setup opcode
@@ -66,12 +63,12 @@ func newWebsocketTransport(conn net.Conn, request *http.Request, wsOptions *Opti
 	}
 	// message reader
 	t.reader = &wsutil.Reader{
-		Source:          t.Buffered,
+		Source:          t.Transport,
 		State:           t.state | ws.StateExtended,
 		CheckUTF8:       wsOptions.CheckUTF8,
 		SkipHeaderCheck: false,
 		MaxFrameSize:    wsOptions.MaxFrameSize,
-		OnIntermediate:  wsutil.ControlFrameHandler(t.Buffered, t.state),
+		OnIntermediate:  wsutil.ControlFrameHandler(t.Transport, t.state),
 		Extensions:      []wsutil.RecvExtension{&t.msgState},
 	}
 
@@ -93,7 +90,7 @@ func (t *websocketTransport) Path() string {
 // reading next message bytes.
 func (t *websocketTransport) Read(p []byte) (int, error) {
 
-	if nil == t.hdr {
+	if !t.msgReading {
 		for {
 			hdr, err := t.reader.NextFrame()
 			if nil != err {
@@ -104,14 +101,14 @@ func (t *websocketTransport) Read(p []byte) (int, error) {
 				return 0, err
 			}
 
-			if hdr.OpCode.IsControl() && t.reader.OnIntermediate != nil {
-				if err = t.reader.OnIntermediate(hdr, t.reader); nil != err {
-					return 0, err
-				}
-				continue
-			}
-
 			if 0 == (hdr.OpCode & t.options.OpCode) {
+				if hdr.OpCode.IsControl() {
+					if err = t.reader.OnIntermediate(hdr, t.reader); nil != err {
+						return 0, err
+					}
+					continue
+				}
+
 				if err = t.reader.Discard(); nil != err {
 					// connection closed
 					if io.EOF == err {
@@ -122,63 +119,65 @@ func (t *websocketTransport) Read(p []byte) (int, error) {
 				continue
 			}
 
-			t.hdr = &hdr
+			t.msgReading = true
 			break
 		}
 	}
 
 	n, err := t.reader.Read(p)
-	if nil != err && io.EOF == err {
+	if io.EOF == err {
 		// all of message bytes were read
-		t.hdr = nil
+		t.msgReading = false
 	}
 
 	return n, err
 }
 
 func (t *websocketTransport) Write(p []byte) (n int, err error) {
-
-	// copy buffer on client side
-	if t.state.ClientSide() {
-		buf := make([]byte, len(p))
-		copy(buf, p)
-		p = buf
-	}
-
 	t.writeLocker.Lock()
 	defer t.writeLocker.Unlock()
-	return len(p), ws.WriteFrame(t.Buffered, t.buildFrame([][]byte{p}))
+	return len(p), ws.WriteFrame(t.Transport, t.buildFrame([][]byte{p}))
 }
 
 func (t *websocketTransport) Writev(buffs transport.Buffers) (int64, error) {
 
 	// header1 + payload1 | header2 + payload2 | ...
-	var combineBuffers = netBuffersPool.Get().(net.Buffers)
-	defer netBuffersPool.Put(combineBuffers)
-	// reset buffer
-	combineBuffers = combineBuffers[:0]
+	//var combineBuffers = make(net.Buffers, 0, len(buffs.Indexes)+(len(buffs.Buffers)*2))
+
+	var combineBuffers net.Buffers
+	if buff := netBuffersPool.Get(); nil != combineBuffers {
+		combineBuffers = buff.(net.Buffers)
+	} else {
+		combineBuffers = make(net.Buffers, 0, len(buffs.Indexes)+(len(buffs.Buffers)*2))
+	}
+
+	defer func() {
+		for index := range combineBuffers {
+			combineBuffers[index] = nil // avoid memory leak
+		}
+		buffs.Buffers = nil
+		netBuffersPool.Put(combineBuffers[:0])
+	}()
+
+	headerBuffers := pbytes.GetLen(ws.MaxHeaderSize * len(buffs.Indexes))
+	defer pbytes.Put(headerBuffers)
 
 	var i = 0
-	for _, j := range buffs.Indexes {
+	var sendBytes int64
+	for index, j := range buffs.Indexes {
 
 		pkt := buffs.Buffers[i:j]
 		i = j
 
-		// copy buffer on client side
-		if t.state.ClientSide() {
-			buffVec := make([][]byte, len(pkt))
-			for index := range pkt {
-				buffVec[index] = make([]byte, len(pkt[index]))
-				copy(buffVec[index], pkt[index])
-			}
-			pkt = buffVec
+		// count of raw message size
+		for _, b := range pkt {
+			sendBytes += int64(len(b))
 		}
 
-		frame := t.buildFrame(pkt)
-
 		// pack packet header
-		var header = [ws.MaxHeaderSize]byte{}
-		var hn = packHeader(header[:], frame.Header)
+		var offset = index * ws.MaxHeaderSize
+		var header = headerBuffers[offset : offset+ws.MaxHeaderSize]
+		var hn = packHeader(header, t.opCode, true, t.state, pkt)
 
 		// header
 		combineBuffers = append(combineBuffers, header[:hn])
@@ -186,20 +185,35 @@ func (t *websocketTransport) Writev(buffs transport.Buffers) (int64, error) {
 		combineBuffers = append(combineBuffers, pkt...)
 	}
 
+	// prepare to writev
+	buffs.Buffers = combineBuffers
+	buffs.Indexes = nil
+
 	t.writeLocker.Lock()
 	defer t.writeLocker.Unlock()
-	return combineBuffers.WriteTo(t.Buffered)
+	n, err := t.Transport.Writev(buffs)
+	if nil == err {
+		// return the write bytes without header size
+		n = sendBytes
+	}
+	return n, err
 }
 
-func (t *websocketTransport) WriteClose(code int, reason string) error {
+func (t *websocketTransport) WriteClose(code int, reason string) (err error) {
 	closeFrame := ws.NewCloseFrame(ws.NewCloseFrameBody(ws.StatusCode(code), reason))
 
 	t.writeLocker.Lock()
 	defer t.writeLocker.Unlock()
-	if err := ws.WriteFrame(t.Buffered, closeFrame); nil != err {
-		return err
+	if err = ws.WriteFrame(t.Transport, closeFrame); nil == err {
+		err = t.Transport.Flush()
 	}
-	return t.Flush()
+	return err
+}
+
+func (t *websocketTransport) Flush() error {
+	t.writeLocker.Lock()
+	defer t.writeLocker.Unlock()
+	return t.Transport.Flush()
 }
 
 func (t *websocketTransport) HttpRequest() *http.Request {
@@ -214,7 +228,7 @@ func (t *websocketTransport) buildFrame(buffs [][]byte) (frame ws.Frame) {
 	// XOR cipher to the payload using mask
 	if t.state.ClientSide() {
 		frame.Header.Masked = true
-		frame.Header.Mask = ws.NewMask()
+		binary.BigEndian.PutUint32(frame.Header.Mask[:], rand.Uint32())
 	}
 
 	for _, buf := range buffs {
@@ -227,43 +241,60 @@ func (t *websocketTransport) buildFrame(buffs [][]byte) (frame ws.Frame) {
 	return
 }
 
-func packHeader(bts []byte, h ws.Header) int {
+func packHeader(bts []byte, op ws.OpCode, fin bool, state ws.State, buffs [][]byte) int {
 	const (
 		bit0  = 0x80
 		len7  = int64(125)
 		len16 = int64(^(uint16(0)))
 		len64 = int64(^(uint64(0)) >> 1)
+
+		rsv = 0
 	)
 
-	if h.Fin {
+	var length int64
+	var mask [4]byte
+
+	// for client side
+	if state.ClientSide() {
+		binary.BigEndian.PutUint32(mask[:], rand.Uint32())
+	}
+
+	for _, buf := range buffs {
+		if state.ClientSide() {
+			ws.Cipher(buf, mask, int(length))
+		}
+		length += int64(len(buf))
+	}
+
+	if fin {
 		bts[0] |= bit0
 	}
-	bts[0] |= h.Rsv << 4
-	bts[0] |= byte(h.OpCode)
+	bts[0] |= rsv << 4
+	bts[0] |= byte(op)
 
 	var n int
 	switch {
-	case h.Length <= len7:
-		bts[1] = byte(h.Length)
+	case length <= len7:
+		bts[1] = byte(length)
 		n = 2
 
-	case h.Length <= len16:
+	case length <= len16:
 		bts[1] = 126
-		binary.BigEndian.PutUint16(bts[2:4], uint16(h.Length))
+		binary.BigEndian.PutUint16(bts[2:4], uint16(length))
 		n = 4
 
-	case h.Length <= len64:
+	case length <= len64:
 		bts[1] = 127
-		binary.BigEndian.PutUint64(bts[2:10], uint64(h.Length))
+		binary.BigEndian.PutUint64(bts[2:10], uint64(length))
 		n = 10
 
 	default:
 		panic(ws.ErrHeaderLengthUnexpected)
 	}
 
-	if h.Masked {
+	if state.ClientSide() {
 		bts[1] |= bit0
-		n += copy(bts[n:], h.Mask[:])
+		n += copy(bts[n:], mask[:])
 	}
 	return n
 }

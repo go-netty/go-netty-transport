@@ -66,10 +66,15 @@ func (w *websocketFactory) Listen(options *transport.Options) (transport.Accepto
 	}
 
 	wsOptions := FromContext(options.Context, DefaultOptions)
+	// websocket acceptor backlog size
+	backlog := wsOptions.Backlog
+	if backlog < 64 {
+		backlog = 64
+	}
 
 	wa := &wsAcceptor{
 		wsOptions:    wsOptions,
-		incoming:     make(chan acceptEvent, 128),
+		incoming:     make(chan acceptEvent, backlog),
 		httpServer:   &http.Server{Addr: listen.Addr().String(), Handler: wsOptions.ServeMux},
 		closedSignal: make(chan struct{}),
 	}
@@ -121,7 +126,9 @@ func (w *wsAcceptor) upgradeHTTP(writer http.ResponseWriter, request *http.Reque
 
 	conn, _, _, err := w.wsOptions.Upgrader.Upgrade(request, writer)
 	if nil != err {
-		http.Error(writer, err.Error(), http.StatusBadRequest)
+		if nil != conn {
+			_ = conn.Close()
+		}
 		return
 	}
 

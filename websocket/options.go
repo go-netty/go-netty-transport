@@ -30,6 +30,7 @@ var DefaultOptions = &Options{
 	Dialer:   ws.DefaultDialer,
 	Upgrader: ws.DefaultHTTPUpgrader,
 	ServeMux: http.DefaultServeMux,
+	Backlog:  128,
 }
 
 // Options to define the websocket
@@ -42,6 +43,7 @@ type Options struct {
 	MaxFrameSize    int64           `json:"maxFrameSize"`
 	ReadBufferSize  int             `json:"readBufferSize"`
 	WriteBufferSize int             `json:"writeBufferSize"`
+	Backlog         int             `json:"backlog"`
 	Dialer          ws.Dialer       `json:"-"`
 	Upgrader        ws.HTTPUpgrader `json:"-"`
 	ServeMux        *http.ServeMux  `json:"-"`
