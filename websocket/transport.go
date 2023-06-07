@@ -24,8 +24,9 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/go-netty/go-netty-transport/websocket/internal/xwsutil"
 	"github.com/go-netty/go-netty/transport"
-	"github.com/gobwas/pool/pbytes"
+	"github.com/go-netty/go-netty/utils/pool/pbytes"
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsflate"
 	"github.com/gobwas/ws/wsutil"
@@ -39,7 +40,7 @@ type websocketTransport struct {
 	state       ws.State  // StateClientSide or StateServerSide
 	opCode      ws.OpCode // OpText or OpBinary
 	request     *http.Request
-	reader      *wsutil.Reader
+	reader      *xwsutil.Reader
 	msgReading  bool
 	writeLocker sync.Mutex
 	msgState    wsflate.MessageState
@@ -62,7 +63,7 @@ func newWebsocketTransport(conn net.Conn, request *http.Request, wsOptions *Opti
 		t.state = ws.StateClientSide
 	}
 	// message reader
-	t.reader = &wsutil.Reader{
+	t.reader = &xwsutil.Reader{
 		Source:          t.Transport,
 		State:           t.state | ws.StateExtended,
 		CheckUTF8:       wsOptions.CheckUTF8,
@@ -134,9 +135,24 @@ func (t *websocketTransport) Read(p []byte) (int, error) {
 }
 
 func (t *websocketTransport) Write(p []byte) (n int, err error) {
+	headerBuffers := pbytes.GetLen(ws.MaxHeaderSize)
+	defer pbytes.Put(headerBuffers)
+
+	var hn = packHeader(headerBuffers, t.opCode, true, t.state, func(mask [4]byte) int64 {
+		if t.state.ClientSide() {
+			ws.Cipher(p, mask, 0)
+		}
+		return int64(len(p))
+	})
+
 	t.writeLocker.Lock()
 	defer t.writeLocker.Unlock()
-	return len(p), ws.WriteFrame(t.Transport, t.buildFrame([][]byte{p}))
+	// write header
+	if _, err = t.Transport.Write(headerBuffers[:hn]); nil == err {
+		// write payload
+		n, err = t.Transport.Write(p)
+	}
+	return
 }
 
 func (t *websocketTransport) Writev(buffs transport.Buffers) (int64, error) {
@@ -144,11 +160,14 @@ func (t *websocketTransport) Writev(buffs transport.Buffers) (int64, error) {
 	// header1 + payload1 | header2 + payload2 | ...
 	//var combineBuffers = make(net.Buffers, 0, len(buffs.Indexes)+(len(buffs.Buffers)*2))
 
+	var combineBuffersPtr *net.Buffers
 	var combineBuffers net.Buffers
-	if buff := netBuffersPool.Get(); nil != combineBuffers {
-		combineBuffers = buff.(net.Buffers)
+	if buff := netBuffersPool.Get(); nil != buff {
+		combineBuffersPtr = buff.(*net.Buffers)
+		combineBuffers = (*combineBuffersPtr)[:0]
 	} else {
 		combineBuffers = make(net.Buffers, 0, len(buffs.Indexes)+(len(buffs.Buffers)*2))
+		combineBuffersPtr = &combineBuffers
 	}
 
 	defer func() {
@@ -156,7 +175,7 @@ func (t *websocketTransport) Writev(buffs transport.Buffers) (int64, error) {
 			combineBuffers[index] = nil // avoid memory leak
 		}
 		buffs.Buffers = nil
-		netBuffersPool.Put(combineBuffers[:0])
+		netBuffersPool.Put(combineBuffersPtr)
 	}()
 
 	headerBuffers := pbytes.GetLen(ws.MaxHeaderSize * len(buffs.Indexes))
@@ -177,7 +196,16 @@ func (t *websocketTransport) Writev(buffs transport.Buffers) (int64, error) {
 		// pack packet header
 		var offset = index * ws.MaxHeaderSize
 		var header = headerBuffers[offset : offset+ws.MaxHeaderSize]
-		var hn = packHeader(header, t.opCode, true, t.state, pkt)
+		var hn = packHeader(header, t.opCode, true, t.state, func(mask [4]byte) int64 {
+			var length int64
+			for _, buf := range pkt {
+				if t.state.ClientSide() {
+					ws.Cipher(buf, mask, int(length))
+				}
+				length += int64(len(buf))
+			}
+			return length
+		})
 
 		// header
 		combineBuffers = append(combineBuffers, header[:hn])
@@ -241,7 +269,7 @@ func (t *websocketTransport) buildFrame(buffs [][]byte) (frame ws.Frame) {
 	return
 }
 
-func packHeader(bts []byte, op ws.OpCode, fin bool, state ws.State, buffs [][]byte) int {
+func packHeader(bts []byte, op ws.OpCode, fin bool, state ws.State, getLen func(mask [4]byte) int64) int {
 	const (
 		bit0  = 0x80
 		len7  = int64(125)
@@ -259,12 +287,7 @@ func packHeader(bts []byte, op ws.OpCode, fin bool, state ws.State, buffs [][]by
 		binary.BigEndian.PutUint32(mask[:], rand.Uint32())
 	}
 
-	for _, buf := range buffs {
-		if state.ClientSide() {
-			ws.Cipher(buf, mask, int(length))
-		}
-		length += int64(len(buf))
-	}
+	length = getLen(mask)
 
 	if fin {
 		bts[0] |= bit0
