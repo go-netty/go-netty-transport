@@ -142,20 +142,23 @@ func (w *wsAcceptor) upgradeHTTP(writer http.ResponseWriter, request *http.Reque
 }
 
 func (w *wsAcceptor) Accept() (transport.Transport, error) {
-
-	ev, ok := <-w.incoming
-	if !ok {
-		return nil, errors.New("server has been closed")
+	select {
+	case ev := <-w.incoming:
+		return newWebsocketTransport(ev.conn, ev.request, w.wsOptions, false)
+	case <-w.closedSignal:
+		// close all incoming connections
+		for {
+			select {
+			case ev := <-w.incoming:
+				_ = ev.conn.Close()
+			default:
+				return nil, errors.New("ws acceptor closed")
+			}
+		}
 	}
-
-	return newWebsocketTransport(ev.conn, ev.request, w.wsOptions, false)
 }
 
 func (w *wsAcceptor) Close() error {
-
-	if nil == w.closedSignal {
-		return nil
-	}
 
 	select {
 	case <-w.closedSignal:
