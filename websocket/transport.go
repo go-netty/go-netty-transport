@@ -17,40 +17,40 @@
 package websocket
 
 import (
+	"bytes"
 	"encoding/binary"
 	"io"
 	"math/rand"
 	"net"
-	"net/http"
 	"sync"
 
+	"github.com/go-netty/go-netty-transport/websocket/internal/xwsflate"
 	"github.com/go-netty/go-netty-transport/websocket/internal/xwsutil"
 	"github.com/go-netty/go-netty/transport"
+	"github.com/go-netty/go-netty/utils"
+	"github.com/go-netty/go-netty/utils/pool/pbuffer"
 	"github.com/go-netty/go-netty/utils/pool/pbytes"
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsflate"
 	"github.com/gobwas/ws/wsutil"
 )
 
-var netBuffersPool sync.Pool
-
 type websocketTransport struct {
 	transport.Transport
 	options     *Options
 	state       ws.State  // StateClientSide or StateServerSide
 	opCode      ws.OpCode // OpText or OpBinary
-	request     *http.Request
+	route       string
 	reader      *xwsutil.Reader
-	msgReading  bool
+	msgReader   io.Reader
 	writeLocker sync.Mutex
-	msgState    wsflate.MessageState
 }
 
-func newWebsocketTransport(conn net.Conn, request *http.Request, wsOptions *Options, client bool) (*websocketTransport, error) {
+func newWebsocketTransport(conn net.Conn, route string, wsOptions *Options, client bool) (*websocketTransport, error) {
 	t := &websocketTransport{
 		Transport: transport.NewTransport(conn, wsOptions.ReadBufferSize, wsOptions.WriteBufferSize),
 		options:   wsOptions,
-		request:   request,
+		route:     route,
 	}
 
 	// setup opcode
@@ -70,14 +70,22 @@ func newWebsocketTransport(conn net.Conn, request *http.Request, wsOptions *Opti
 		SkipHeaderCheck: false,
 		MaxFrameSize:    wsOptions.MaxFrameSize,
 		OnIntermediate:  wsutil.ControlFrameHandler(t.Transport, t.state),
-		Extensions:      []wsutil.RecvExtension{&t.msgState},
+		GetFlateReader: func(reader io.Reader) *xwsflate.Reader {
+			flateReader := t.options.flateReaderPool.Get().(*xwsflate.Reader)
+			flateReader.Reset(reader)
+			return flateReader
+		},
+		PutFlateReader: func(reader *xwsflate.Reader) {
+			reader.Reset(nil)
+			t.options.flateReaderPool.Put(reader)
+		},
 	}
 
 	return t, nil
 }
 
-func (t *websocketTransport) Path() string {
-	return t.request.URL.Path
+func (t *websocketTransport) Route() string {
+	return t.route
 }
 
 // Read implements io.Reader. It reads the next message payload into p.
@@ -91,7 +99,7 @@ func (t *websocketTransport) Path() string {
 // reading next message bytes.
 func (t *websocketTransport) Read(p []byte) (int, error) {
 
-	if !t.msgReading {
+	if nil == t.msgReader {
 		for {
 			hdr, err := t.reader.NextFrame()
 			if nil != err {
@@ -120,15 +128,15 @@ func (t *websocketTransport) Read(p []byte) (int, error) {
 				continue
 			}
 
-			t.msgReading = true
+			t.msgReader = t.reader
 			break
 		}
 	}
 
-	n, err := t.reader.Read(p)
+	n, err := t.msgReader.Read(p)
 	if io.EOF == err {
 		// all of message bytes were read
-		t.msgReading = false
+		t.msgReader = nil
 	}
 
 	return n, err
@@ -138,93 +146,98 @@ func (t *websocketTransport) Write(p []byte) (n int, err error) {
 	headerBuffers := pbytes.GetLen(ws.MaxHeaderSize)
 	defer pbytes.Put(headerBuffers)
 
-	var hn = packHeader(headerBuffers, t.opCode, true, t.state, func(mask [4]byte) int64 {
-		if t.state.ClientSide() {
-			ws.Cipher(p, mask, 0)
+	var payloadBuffer *bytes.Buffer
+	var flateWriter *xwsflate.Writer
+	defer func() {
+		if nil != payloadBuffer {
+			pbuffer.Put(payloadBuffer)
 		}
-		return int64(len(p))
-	})
+
+		if nil != flateWriter {
+			flateWriter.Reset(nil)
+			t.options.flateWriterPool.Put(flateWriter)
+		}
+	}()
 
 	t.writeLocker.Lock()
 	defer t.writeLocker.Unlock()
-	// write header
+
+	// raw payload length
+	dataSize := len(p)
+
+	// pack websocket header
+	var hn, e = t.packHeader(headerBuffers, true, func(mask [4]byte) (payloadLength int64, compressed bool, err error) {
+		if t.state.ClientSide() {
+			ws.Cipher(p, mask, 0)
+		}
+
+		// raw payload length
+		payloadLength = int64(dataSize)
+		// payload compression
+		if compressed = t.options.CompressEnabled && payloadLength >= t.options.CompressThreshold; compressed {
+			payloadBuffer = pbuffer.Get(int(payloadLength))
+			flateWriter = t.options.flateWriterPool.Get().(*xwsflate.Writer)
+			flateWriter.Reset(payloadBuffer)
+
+			if _, err = flateWriter.Write(p); nil == err {
+				err = flateWriter.Close()
+			}
+			// compressed length
+			payloadLength = int64(payloadBuffer.Len())
+			// compressed data
+			p = payloadBuffer.Bytes()
+		}
+		return
+	})
+
+	// pack header failed
+	if nil != e {
+		return 0, e
+	}
+
+	// write frame header
 	if _, err = t.Transport.Write(headerBuffers[:hn]); nil == err {
-		// write payload
-		n, err = t.Transport.Write(p)
+		// write payload body
+		if _, err = t.Transport.Write(p); nil == err {
+			// return unpressed data-size
+			n = dataSize
+		}
 	}
 	return
 }
 
 func (t *websocketTransport) Writev(buffs transport.Buffers) (int64, error) {
 
-	// header1 + payload1 | header2 + payload2 | ...
-	//var combineBuffers = make(net.Buffers, 0, len(buffs.Indexes)+(len(buffs.Buffers)*2))
-
-	var combineBuffersPtr *net.Buffers
-	var combineBuffers net.Buffers
-	if buff := netBuffersPool.Get(); nil != buff {
-		combineBuffersPtr = buff.(*net.Buffers)
-		combineBuffers = (*combineBuffersPtr)[:0]
-	} else {
-		combineBuffers = make(net.Buffers, 0, len(buffs.Indexes)+(len(buffs.Buffers)*2))
-		combineBuffersPtr = &combineBuffers
-	}
-
-	defer func() {
-		for index := range combineBuffers {
-			combineBuffers[index] = nil // avoid memory leak
-		}
-		buffs.Buffers = nil
-		netBuffersPool.Put(combineBuffersPtr)
-	}()
-
-	headerBuffers := pbytes.GetLen(ws.MaxHeaderSize * len(buffs.Indexes))
-	defer pbytes.Put(headerBuffers)
-
 	var i = 0
-	var sendBytes int64
-	for index, j := range buffs.Indexes {
+	var writeSize int64
+	for _, j := range buffs.Indexes {
 
 		pkt := buffs.Buffers[i:j]
 		i = j
 
-		// count of raw message size
-		for _, b := range pkt {
-			sendBytes += int64(len(b))
-		}
-
-		// pack packet header
-		var offset = index * ws.MaxHeaderSize
-		var header = headerBuffers[offset : offset+ws.MaxHeaderSize]
-		var hn = packHeader(header, t.opCode, true, t.state, func(mask [4]byte) int64 {
-			var length int64
-			for _, buf := range pkt {
-				if t.state.ClientSide() {
-					ws.Cipher(buf, mask, int(length))
-				}
-				length += int64(len(buf))
+		switch len(pkt) {
+		case 1:
+			writeSize += int64(len(pkt[0]))
+			if _, err := t.Write(pkt[0]); nil != err {
+				return 0, err
 			}
-			return length
-		})
+		default:
+			pktSize := utils.CountOf(pkt)
+			dataBuffer := pbuffer.Get(int(pktSize))
+			for _, p := range pkt {
+				dataBuffer.Write(p)
+			}
+			writeSize += int64(dataBuffer.Len())
 
-		// header
-		combineBuffers = append(combineBuffers, header[:hn])
-		// payload
-		combineBuffers = append(combineBuffers, pkt...)
+			if _, err := t.Write(dataBuffer.Bytes()); nil != err {
+				pbuffer.Put(dataBuffer)
+				return 0, err
+			}
+			pbuffer.Put(dataBuffer)
+		}
 	}
 
-	// prepare to writev
-	buffs.Buffers = combineBuffers
-	buffs.Indexes = nil
-
-	t.writeLocker.Lock()
-	defer t.writeLocker.Unlock()
-	n, err := t.Transport.Writev(buffs)
-	if nil == err {
-		// return the write bytes without header size
-		n = sendBytes
-	}
-	return n, err
+	return writeSize, nil
 }
 
 func (t *websocketTransport) WriteClose(code int, reason string) (err error) {
@@ -244,80 +257,63 @@ func (t *websocketTransport) Flush() error {
 	return t.Transport.Flush()
 }
 
-func (t *websocketTransport) HttpRequest() *http.Request {
-	return t.request
-}
-
-func (t *websocketTransport) buildFrame(buffs [][]byte) (frame ws.Frame) {
-
-	// new websocket frame
-	frame = ws.NewFrame(t.opCode, true, nil)
-
-	// XOR cipher to the payload using mask
-	if t.state.ClientSide() {
-		frame.Header.Masked = true
-		binary.BigEndian.PutUint32(frame.Header.Mask[:], rand.Uint32())
-	}
-
-	for _, buf := range buffs {
-		if frame.Header.Masked {
-			ws.Cipher(buf, frame.Header.Mask, int(frame.Header.Length))
-		}
-		frame.Header.Length += int64(len(buf))
-	}
-
-	return
-}
-
-func packHeader(bts []byte, op ws.OpCode, fin bool, state ws.State, getLen func(mask [4]byte) int64) int {
+func (t *websocketTransport) packHeader(bts []byte, fin bool, getLen func(mask [4]byte) (int64, bool, error)) (n int, err error) {
 	const (
 		bit0  = 0x80
 		len7  = int64(125)
 		len16 = int64(^(uint16(0)))
 		len64 = int64(^(uint64(0)) >> 1)
-
-		rsv = 0
 	)
 
-	var length int64
-	var mask [4]byte
-
-	// for client side
-	if state.ClientSide() {
-		binary.BigEndian.PutUint32(mask[:], rand.Uint32())
+	var h = ws.Header{Fin: fin, OpCode: t.opCode, Masked: t.state.ClientSide()}
+	if h.Masked {
+		binary.BigEndian.PutUint32(h.Mask[:], rand.Uint32())
 	}
 
-	length = getLen(mask)
+	var compressed bool
+	if h.Length, compressed, err = getLen(h.Mask); nil != err {
+		return
+	}
 
-	if fin {
+	if compressed {
+		r1, r2, r3 := ws.RsvBits(h.Rsv)
+		if r1 {
+			err = wsflate.ErrUnexpectedCompressionBit
+			return
+		}
+		if h.OpCode.IsData() && h.OpCode != ws.OpContinuation {
+			h.Rsv = ws.Rsv(true, r2, r3)
+		}
+	}
+
+	if h.Fin {
 		bts[0] |= bit0
 	}
-	bts[0] |= rsv << 4
-	bts[0] |= byte(op)
+	bts[0] |= h.Rsv << 4
+	bts[0] |= byte(h.OpCode)
 
-	var n int
 	switch {
-	case length <= len7:
-		bts[1] = byte(length)
+	case h.Length <= len7:
+		bts[1] = byte(h.Length)
 		n = 2
 
-	case length <= len16:
+	case h.Length <= len16:
 		bts[1] = 126
-		binary.BigEndian.PutUint16(bts[2:4], uint16(length))
+		binary.BigEndian.PutUint16(bts[2:4], uint16(h.Length))
 		n = 4
 
-	case length <= len64:
+	case h.Length <= len64:
 		bts[1] = 127
-		binary.BigEndian.PutUint64(bts[2:10], uint64(length))
+		binary.BigEndian.PutUint64(bts[2:10], uint64(h.Length))
 		n = 10
 
 	default:
-		panic(ws.ErrHeaderLengthUnexpected)
+		err = ws.ErrHeaderLengthUnexpected
 	}
 
-	if state.ClientSide() {
+	if h.Masked {
 		bts[1] |= bit0
-		n += copy(bts[n:], mask[:])
+		n += copy(bts[n:], h.Mask[:])
 	}
-	return n
+	return
 }

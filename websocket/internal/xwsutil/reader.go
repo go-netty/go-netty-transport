@@ -1,10 +1,13 @@
 package xwsutil
 
 import (
+	"fmt"
 	"io"
 	"io/ioutil"
 
+	"github.com/go-netty/go-netty-transport/websocket/internal/xwsflate"
 	"github.com/gobwas/ws"
+	"github.com/gobwas/ws/wsflate"
 	"github.com/gobwas/ws/wsutil"
 )
 
@@ -42,11 +45,15 @@ type Reader struct {
 	OnContinuation wsutil.FrameHandlerFunc
 	OnIntermediate wsutil.FrameHandlerFunc
 
+	GetFlateReader func(reader io.Reader) *xwsflate.Reader
+	PutFlateReader func(reader *xwsflate.Reader)
+
 	opCode       ws.OpCode         // Used to store message op code on fragmentation.
 	frame        io.Reader         // Used to as frame reader.
 	raw          io.LimitedReader  // Used to discard frames without cipher.
 	utf8         wsutil.UTF8Reader // Used to check UTF8 sequences if CheckUTF8 is true.
 	cipherReader *wsutil.CipherReader
+	flateReader  *xwsflate.Reader
 }
 
 // NewReader creates new frame reader that reads from r keeping given state to
@@ -182,6 +189,18 @@ func (r *Reader) NextFrame() (hdr ws.Header, err error) {
 	}
 
 	frame := io.Reader(&r.raw)
+	compressed, err := wsflate.IsCompressed(hdr)
+	switch {
+	case nil != err:
+		return hdr, err
+	case compressed:
+		if nil == r.GetFlateReader {
+			return hdr, fmt.Errorf("required `GetFlateReader`")
+		}
+		r.flateReader = r.GetFlateReader(frame)
+		frame = r.flateReader
+	}
+
 	if hdr.Masked {
 		if nil == r.cipherReader {
 			r.cipherReader = wsutil.NewCipherReader(frame, hdr.Mask)
@@ -256,6 +275,12 @@ func (r *Reader) reset() {
 	r.opCode = 0
 	if nil != r.cipherReader {
 		r.cipherReader.Reset(nil, [4]byte{})
+	}
+	if nil != r.flateReader {
+		if nil != r.PutFlateReader {
+			r.PutFlateReader(r.flateReader)
+		}
+		r.flateReader = nil
 	}
 }
 

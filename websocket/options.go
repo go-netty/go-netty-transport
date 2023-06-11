@@ -17,36 +17,76 @@
 package websocket
 
 import (
+	"compress/flate"
 	"context"
+	"io"
 	"net/http"
+	"sync"
 
+	"github.com/go-netty/go-netty-transport/websocket/internal/xwsflate"
 	"github.com/go-netty/go-netty/transport"
 	"github.com/gobwas/ws"
+	"github.com/gobwas/ws/wsflate"
 )
 
 // DefaultOptions default websocket options
-var DefaultOptions = &Options{
+var DefaultOptions = (&Options{
 	OpCode:   ws.OpText,
 	Dialer:   ws.DefaultDialer,
 	Upgrader: ws.DefaultHTTPUpgrader,
 	ServeMux: http.DefaultServeMux,
 	Backlog:  128,
-}
+}).Apply()
 
 // Options to define the websocket
 type Options struct {
-	Cert            string          `json:"cert"`
-	Key             string          `json:"key"`
-	OpCode          ws.OpCode       `json:"opCode"`
-	Routers         []string        `json:"routers"`
-	CheckUTF8       bool            `json:"checkUTF8"`
-	MaxFrameSize    int64           `json:"maxFrameSize"`
-	ReadBufferSize  int             `json:"readBufferSize"`
-	WriteBufferSize int             `json:"writeBufferSize"`
-	Backlog         int             `json:"backlog"`
-	Dialer          ws.Dialer       `json:"-"`
-	Upgrader        ws.HTTPUpgrader `json:"-"`
-	ServeMux        *http.ServeMux  `json:"-"`
+	Cert              string          `json:"cert"`
+	Key               string          `json:"key"`
+	OpCode            ws.OpCode       `json:"opCode"`
+	Routers           []string        `json:"routers"`
+	CheckUTF8         bool            `json:"checkUTF8"`
+	MaxFrameSize      int64           `json:"maxFrameSize"`
+	ReadBufferSize    int             `json:"readBufferSize"`
+	WriteBufferSize   int             `json:"writeBufferSize"`
+	Backlog           int             `json:"backlog"`
+	CompressEnabled   bool            `json:"compressEnabled"`
+	CompressLevel     int             `json:"compressLevel"`
+	CompressThreshold int64           `json:"compressThreshold"`
+	Dialer            ws.Dialer       `json:"-"`
+	Upgrader          ws.HTTPUpgrader `json:"-"`
+	ServeMux          *http.ServeMux  `json:"-"`
+	flateReaderPool   sync.Pool
+	flateWriterPool   sync.Pool
+}
+
+func (o *Options) Apply() *Options {
+	o.flateReaderPool.New = func() interface{} {
+		return xwsflate.NewReader(nil, func(reader io.Reader) wsflate.Decompressor {
+			return flate.NewReader(reader)
+		})
+	}
+
+	if o.CompressEnabled {
+		compressLv := o.CompressLevel
+		o.flateWriterPool.New = func() interface{} {
+			return xwsflate.NewWriter(nil, func(writer io.Writer) wsflate.Compressor {
+				w, _ := flate.NewWriter(writer, compressLv)
+				return w
+			})
+		}
+	}
+
+	if nil == o.Upgrader.Negotiate {
+		e := wsflate.Extension{
+			Parameters: wsflate.Parameters{
+				ServerNoContextTakeover: true,
+				ClientNoContextTakeover: true,
+			},
+		}
+		o.Upgrader.Negotiate = e.Negotiate
+	}
+
+	return o
 }
 
 type contextKey struct{}
@@ -54,7 +94,7 @@ type contextKey struct{}
 // WithOptions to wrap the websocket options
 func WithOptions(option *Options) transport.Option {
 	return func(options *transport.Options) error {
-		options.Context = context.WithValue(options.Context, contextKey{}, option)
+		options.Context = context.WithValue(options.Context, contextKey{}, option.Apply())
 		return nil
 	}
 }

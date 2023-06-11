@@ -51,7 +51,7 @@ func (w *websocketFactory) Connect(options *transport.Options) (transport.Transp
 		return nil, err
 	}
 
-	return newWebsocketTransport(conn, &http.Request{URL: u}, wsOptions, true)
+	return newWebsocketTransport(conn, u.Path, wsOptions, true)
 }
 
 func (w *websocketFactory) Listen(options *transport.Options) (transport.Acceptor, error) {
@@ -110,9 +110,8 @@ func (w *websocketFactory) Listen(options *transport.Options) (transport.Accepto
 }
 
 type acceptEvent struct {
-	conn    net.Conn
-	path    string
-	request *http.Request
+	conn  net.Conn
+	route string
 }
 
 type wsAcceptor struct {
@@ -136,7 +135,7 @@ func (w *wsAcceptor) upgradeHTTP(writer http.ResponseWriter, request *http.Reque
 	case <-w.closedSignal:
 		_ = conn.Close()
 		return
-	case w.incoming <- acceptEvent{conn: conn, path: request.URL.Path, request: request}:
+	case w.incoming <- acceptEvent{conn: conn, route: request.URL.Path}:
 		// post to acceptor
 	}
 }
@@ -144,7 +143,7 @@ func (w *wsAcceptor) upgradeHTTP(writer http.ResponseWriter, request *http.Reque
 func (w *wsAcceptor) Accept() (transport.Transport, error) {
 	select {
 	case ev := <-w.incoming:
-		return newWebsocketTransport(ev.conn, ev.request, w.wsOptions, false)
+		return newWebsocketTransport(ev.conn, ev.route, w.wsOptions, false)
 	case <-w.closedSignal:
 		// close all incoming connections
 		for {

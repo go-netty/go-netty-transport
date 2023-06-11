@@ -48,7 +48,7 @@ func (hu HTTPUpgrader) Upgrade(writer http.ResponseWriter, request *http.Request
 		return nil, err
 	}
 
-	t, err := newWebsocketTransport(conn, request, hu.options, false)
+	t, err := newWebsocketTransport(conn, request.URL.Path, hu.options, false)
 	if nil != err {
 		_ = conn.Close()
 		return nil, err

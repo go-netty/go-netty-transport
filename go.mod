@@ -3,7 +3,8 @@ module github.com/go-netty/go-netty-transport
 go 1.16
 
 require (
-	github.com/go-netty/go-netty v1.6.0
+	github.com/go-netty/go-netty v1.6.1
+	github.com/gobwas/httphead v0.1.0
 	github.com/gobwas/ws v1.2.1
 	github.com/libp2p/go-reuseport v0.3.0
 	github.com/quic-go/quic-go v0.34.0
