@@ -48,7 +48,12 @@ func (t *tlsFactory) Connect(options *transport.Options) (transport.Transport, e
 		return nil, err
 	}
 
-	return newTlsTransport(conn, tlsOptions, true)
+	tt, err := newTlsTransport(conn, tlsOptions, true)
+	if nil != err {
+		_ = conn.Close()
+		return nil, err
+	}
+	return tt, nil
 }
 
 func (t *tlsFactory) Listen(options *transport.Options) (transport.Acceptor, error) {
@@ -82,7 +87,12 @@ func (t *tlsAcceptor) Accept() (transport.Transport, error) {
 		return nil, err
 	}
 
-	return newTlsTransport(conn.(*tls.Conn), t.options, false)
+	tt, err := newTlsTransport(conn.(*tls.Conn), t.options, false)
+	if nil != err {
+		_ = conn.Close()
+		return nil, err
+	}
+	return tt, nil
 }
 
 func (t *tlsAcceptor) Close() error {

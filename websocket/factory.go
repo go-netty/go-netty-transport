@@ -51,7 +51,12 @@ func (w *websocketFactory) Connect(options *transport.Options) (transport.Transp
 		return nil, err
 	}
 
-	return newWebsocketTransport(conn, u.Path, wsOptions, true)
+	tt, err := newWebsocketTransport(conn, u.Path, wsOptions, true)
+	if nil != err {
+		_ = conn.Close()
+		return nil, err
+	}
+	return tt, nil
 }
 
 func (w *websocketFactory) Listen(options *transport.Options) (transport.Acceptor, error) {
@@ -143,7 +148,12 @@ func (w *wsAcceptor) upgradeHTTP(writer http.ResponseWriter, request *http.Reque
 func (w *wsAcceptor) Accept() (transport.Transport, error) {
 	select {
 	case ev := <-w.incoming:
-		return newWebsocketTransport(ev.conn, ev.route, w.wsOptions, false)
+		tt, err := newWebsocketTransport(ev.conn, ev.route, w.wsOptions, false)
+		if nil != err {
+			_ = ev.conn.Close()
+			return nil, err
+		}
+		return tt, nil
 	case <-w.closedSignal:
 		// close all incoming connections
 		for {

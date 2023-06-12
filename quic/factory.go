@@ -47,7 +47,12 @@ func (qf *quicFactory) Connect(options *transport.Options) (transport.Transport,
 		return nil, err
 	}
 
-	return newQuicTransport(conn, quicOptions, true)
+	tt, err := newQuicTransport(conn, quicOptions, true)
+	if nil != err {
+		_ = conn.Close()
+		return nil, err
+	}
+	return tt, nil
 }
 
 func (qf *quicFactory) Listen(options *transport.Options) (transport.Acceptor, error) {
@@ -78,7 +83,12 @@ func (q *quicAcceptor) Accept() (transport.Transport, error) {
 		return nil, err
 	}
 
-	return newQuicTransport(conn, q.options, false)
+	tt, err := newQuicTransport(conn, q.options, false)
+	if nil != err {
+		_ = conn.Close()
+		return nil, err
+	}
+	return tt, nil
 }
 
 func (q *quicAcceptor) Close() error {

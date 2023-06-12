@@ -45,7 +45,12 @@ func (f *kcpFactory) Connect(options *transport.Options) (transport.Transport, e
 		return nil, err
 	}
 
-	return newKcpTransport(conn, kcpOptions, true)
+	tt, err := newKcpTransport(conn, kcpOptions, true)
+	if nil != err {
+		_ = conn.Close()
+		return nil, err
+	}
+	return tt, nil
 }
 
 func (f *kcpFactory) Listen(options *transport.Options) (transport.Acceptor, error) {
@@ -90,7 +95,12 @@ func (k *kcpAcceptor) Accept() (transport.Transport, error) {
 		return nil, err
 	}
 
-	return newKcpTransport(conn, k.options, false)
+	tt, err := newKcpTransport(conn, k.options, false)
+	if nil != err {
+		_ = conn.Close()
+		return nil, err
+	}
+	return tt, nil
 }
 
 func (k *kcpAcceptor) Close() error {
