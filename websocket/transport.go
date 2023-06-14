@@ -143,6 +143,49 @@ func (t *websocketTransport) Read(p []byte) (int, error) {
 }
 
 func (t *websocketTransport) Write(p []byte) (n int, err error) {
+
+	if compressed := t.options.CompressEnabled && int64(len(p)) >= t.options.CompressThreshold; compressed {
+		return t.writeCompress(p)
+	}
+
+	packetBuffers := pbytes.GetLen(ws.MaxHeaderSize + len(p))
+	defer pbytes.Put(packetBuffers)
+
+	t.writeLocker.Lock()
+	defer t.writeLocker.Unlock()
+
+	// raw payload length
+	dataSize := len(p)
+
+	// pack websocket header
+	var hn, e = t.packHeader(packetBuffers[:ws.MaxHeaderSize], true, func(mask [4]byte) (payloadLength int64, compressed bool, err error) {
+		if t.state.ClientSide() {
+			ws.Cipher(p, mask, 0)
+		}
+		// raw payload length
+		payloadLength = int64(dataSize)
+		return
+	})
+
+	// pack header failed
+	if nil != e {
+		return 0, e
+	}
+
+	// copy payload
+	hn += copy(packetBuffers[hn:], p)
+
+	// write websocket frame
+	if _, err = t.Transport.Write(packetBuffers[:hn]); nil == err {
+		// return data-size
+		n = dataSize
+	}
+
+	return
+}
+
+func (t *websocketTransport) writeCompress(p []byte) (n int, err error) {
+
 	headerBuffers := pbytes.GetLen(ws.MaxHeaderSize)
 	defer pbytes.Put(headerBuffers)
 
