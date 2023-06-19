@@ -80,7 +80,7 @@ func (w *websocketFactory) Listen(options *transport.Options) (transport.Accepto
 	wa := &wsAcceptor{
 		wsOptions:    wsOptions,
 		incoming:     make(chan acceptEvent, backlog),
-		httpServer:   &http.Server{Addr: listen.Addr().String(), Handler: wsOptions.ServeMux},
+		httpServer:   &http.Server{Addr: listen.Addr().String(), Handler: wsOptions.ServeMux, TLSConfig: wsOptions.TLS},
 		closedSignal: make(chan struct{}),
 	}
 
@@ -100,7 +100,7 @@ func (w *websocketFactory) Listen(options *transport.Options) (transport.Accepto
 		case "ws":
 			errorChan <- wa.httpServer.Serve(listen)
 		case "wss":
-			errorChan <- wa.httpServer.ServeTLS(listen, wa.wsOptions.Cert, wa.wsOptions.Key)
+			errorChan <- wa.httpServer.ServeTLS(listen, "", "")
 		}
 	}()
 

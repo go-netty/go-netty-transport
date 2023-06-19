@@ -19,6 +19,7 @@ package websocket
 import (
 	"compress/flate"
 	"context"
+	"crypto/tls"
 	"io"
 	"net/http"
 	"sync"
@@ -40,8 +41,8 @@ var DefaultOptions = (&Options{
 
 // Options to define the websocket
 type Options struct {
-	Cert              string          `json:"cert"`
-	Key               string          `json:"key"`
+	CertFile          string          `json:"certFile"`
+	KeyFile           string          `json:"keyFile"`
 	OpCode            ws.OpCode       `json:"opCode"`
 	Routers           []string        `json:"routers"`
 	CheckUTF8         bool            `json:"checkUTF8"`
@@ -52,6 +53,7 @@ type Options struct {
 	CompressEnabled   bool            `json:"compressEnabled"`
 	CompressLevel     int             `json:"compressLevel"`
 	CompressThreshold int64           `json:"compressThreshold"`
+	TLS               *tls.Config     `json:"-"`
 	Dialer            ws.Dialer       `json:"-"`
 	Upgrader          ws.HTTPUpgrader `json:"-"`
 	ServeMux          *http.ServeMux  `json:"-"`
@@ -84,6 +86,14 @@ func (o *Options) Apply() *Options {
 			},
 		}
 		o.Upgrader.Negotiate = e.Negotiate
+	}
+
+	if "" != o.CertFile && "" != o.KeyFile {
+		if cer, err := tls.LoadX509KeyPair(o.CertFile, o.KeyFile); nil != err {
+			panic(err)
+		} else {
+			o.TLS.Certificates = append(o.TLS.Certificates, cer)
+		}
 	}
 
 	return o

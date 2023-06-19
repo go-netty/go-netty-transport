@@ -32,7 +32,6 @@ import (
 	"github.com/go-netty/go-netty/utils/pool/pbytes"
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsflate"
-	"github.com/gobwas/ws/wsutil"
 )
 
 type websocketTransport struct {
@@ -69,7 +68,7 @@ func newWebsocketTransport(conn net.Conn, route string, wsOptions *Options, clie
 		CheckUTF8:       wsOptions.CheckUTF8,
 		SkipHeaderCheck: false,
 		MaxFrameSize:    wsOptions.MaxFrameSize,
-		OnIntermediate:  wsutil.ControlFrameHandler(t.Transport, t.state),
+		OnIntermediate:  xwsutil.ControlFrameHandler(t.Transport, &t.writeLocker, t.state),
 		GetFlateReader: func(reader io.Reader) *xwsflate.Reader {
 			flateReader := t.options.flateReaderPool.Get().(*xwsflate.Reader)
 			flateReader.Reset(reader)
@@ -110,14 +109,14 @@ func (t *websocketTransport) Read(p []byte) (int, error) {
 				return 0, err
 			}
 
-			if 0 == (hdr.OpCode & t.options.OpCode) {
-				if hdr.OpCode.IsControl() {
-					if err = t.reader.OnIntermediate(hdr, t.reader); nil != err {
-						return 0, err
-					}
-					continue
+			if hdr.OpCode.IsControl() {
+				if err = t.reader.OnIntermediate(hdr, t.reader); nil != err {
+					return 0, err
 				}
+				continue
+			}
 
+			if 0 == (hdr.OpCode & t.options.OpCode) {
 				if err = t.reader.Discard(); nil != err {
 					// connection closed
 					if io.EOF == err {
@@ -125,6 +124,8 @@ func (t *websocketTransport) Read(p []byte) (int, error) {
 					}
 					return 0, err
 				}
+				// close the connection because it has received a type of data it cannot accept
+				_ = t.WriteClose(int(ws.StatusUnsupportedData), "unsupported data type")
 				continue
 			}
 
@@ -151,9 +152,6 @@ func (t *websocketTransport) Write(p []byte) (n int, err error) {
 	packetBuffers := pbytes.GetLen(ws.MaxHeaderSize + len(p))
 	defer pbytes.Put(packetBuffers)
 
-	t.writeLocker.Lock()
-	defer t.writeLocker.Unlock()
-
 	// raw payload length
 	dataSize := len(p)
 
@@ -174,6 +172,9 @@ func (t *websocketTransport) Write(p []byte) (n int, err error) {
 
 	// copy payload
 	hn += copy(packetBuffers[hn:], p)
+
+	t.writeLocker.Lock()
+	defer t.writeLocker.Unlock()
 
 	// write websocket frame
 	if _, err = t.Transport.Write(packetBuffers[:hn]); nil == err {
@@ -201,9 +202,6 @@ func (t *websocketTransport) writeCompress(p []byte) (n int, err error) {
 			t.options.flateWriterPool.Put(flateWriter)
 		}
 	}()
-
-	t.writeLocker.Lock()
-	defer t.writeLocker.Unlock()
 
 	// raw payload length
 	dataSize := len(p)
@@ -237,6 +235,9 @@ func (t *websocketTransport) writeCompress(p []byte) (n int, err error) {
 	if nil != e {
 		return 0, e
 	}
+
+	t.writeLocker.Lock()
+	defer t.writeLocker.Unlock()
 
 	// write frame header
 	if _, err = t.Transport.Write(headerBuffers[:hn]); nil == err {
