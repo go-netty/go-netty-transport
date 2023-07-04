@@ -31,7 +31,6 @@ import (
 	"github.com/go-netty/go-netty/utils/pool/pbuffer"
 	"github.com/go-netty/go-netty/utils/pool/pbytes"
 	"github.com/gobwas/ws"
-	"github.com/gobwas/ws/wsflate"
 )
 
 type websocketTransport struct {
@@ -304,60 +303,55 @@ func (t *websocketTransport) Flush() error {
 func (t *websocketTransport) packHeader(bts []byte, fin bool, getLen func(mask [4]byte) (int64, bool, error)) (n int, err error) {
 	const (
 		bit0  = 0x80
+		bit1  = 0x40
 		len7  = int64(125)
 		len16 = int64(^(uint16(0)))
 		len64 = int64(^(uint64(0)) >> 1)
 	)
 
-	var h = ws.Header{Fin: fin, OpCode: t.opCode, Masked: t.state.ClientSide()}
-	if h.Masked {
-		binary.BigEndian.PutUint32(h.Mask[:], rand.Uint32())
+	var mask [4]byte
+	if t.state.ClientSide() {
+		binary.BigEndian.PutUint32(mask[:], rand.Uint32())
 	}
 
 	var compressed bool
-	if h.Length, compressed, err = getLen(h.Mask); nil != err {
+	var length int64
+	if length, compressed, err = getLen(mask); nil != err {
 		return
 	}
 
-	if compressed {
-		r1, r2, r3 := ws.RsvBits(h.Rsv)
-		if r1 {
-			err = wsflate.ErrUnexpectedCompressionBit
-			return
-		}
-		if h.OpCode.IsData() && h.OpCode != ws.OpContinuation {
-			h.Rsv = ws.Rsv(true, r2, r3)
-		}
-	}
+	bts[0] = byte(t.opCode)
 
-	if h.Fin {
+	if fin {
 		bts[0] |= bit0
 	}
-	bts[0] |= h.Rsv << 4
-	bts[0] |= byte(h.OpCode)
+
+	if compressed {
+		bts[0] |= bit1
+	}
 
 	switch {
-	case h.Length <= len7:
-		bts[1] = byte(h.Length)
+	case length <= len7:
+		bts[1] = byte(length)
 		n = 2
 
-	case h.Length <= len16:
+	case length <= len16:
 		bts[1] = 126
-		binary.BigEndian.PutUint16(bts[2:4], uint16(h.Length))
+		binary.BigEndian.PutUint16(bts[2:4], uint16(length))
 		n = 4
 
-	case h.Length <= len64:
+	case length <= len64:
 		bts[1] = 127
-		binary.BigEndian.PutUint64(bts[2:10], uint64(h.Length))
+		binary.BigEndian.PutUint64(bts[2:10], uint64(length))
 		n = 10
 
 	default:
 		err = ws.ErrHeaderLengthUnexpected
 	}
 
-	if h.Masked {
+	if t.state.ClientSide() {
 		bts[1] |= bit0
-		n += copy(bts[n:], h.Mask[:])
+		n += copy(bts[n:], mask[:])
 	}
 	return
 }
