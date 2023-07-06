@@ -22,6 +22,7 @@ import (
 	"io"
 	"math/rand"
 	"net"
+	"net/http"
 	"sync"
 
 	"github.com/go-netty/go-netty-transport/websocket/internal/xwsflate"
@@ -39,16 +40,18 @@ type websocketTransport struct {
 	state       ws.State  // StateClientSide or StateServerSide
 	opCode      ws.OpCode // OpText or OpBinary
 	route       string
+	headers     http.Header
 	reader      *xwsutil.Reader
 	msgReader   io.Reader
 	writeLocker sync.Mutex
 }
 
-func newWebsocketTransport(conn net.Conn, route string, wsOptions *Options, client bool) (*websocketTransport, error) {
+func newWebsocketTransport(conn net.Conn, route string, wsOptions *Options, client bool, headers http.Header) (*websocketTransport, error) {
 	t := &websocketTransport{
 		Transport: transport.NewTransport(conn, wsOptions.ReadBufferSize, wsOptions.WriteBufferSize),
 		options:   wsOptions,
 		route:     route,
+		headers:   headers,
 	}
 
 	// setup opcode
@@ -84,6 +87,10 @@ func newWebsocketTransport(conn net.Conn, route string, wsOptions *Options, clie
 
 func (t *websocketTransport) Route() string {
 	return t.route
+}
+
+func (t *websocketTransport) Header() http.Header {
+	return t.headers
 }
 
 // Read implements io.Reader. It reads the next message payload into p.

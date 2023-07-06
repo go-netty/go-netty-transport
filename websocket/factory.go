@@ -45,13 +45,19 @@ func (w *websocketFactory) Connect(options *transport.Options) (transport.Transp
 
 	wsOptions := FromContext(options.Context, DefaultOptions)
 
+	headers := make(http.Header)
+	wsOptions.Dialer.OnHeader = func(key, value []byte) (err error) {
+		headers.Add(string(key), string(value))
+		return nil
+	}
+
 	u := &url.URL{Scheme: options.Address.Scheme, Host: options.Address.Host, Path: options.Address.Path}
 	conn, _, _, err := wsOptions.Dialer.Dial(options.Context, u.String())
 	if nil != err {
 		return nil, err
 	}
 
-	tt, err := newWebsocketTransport(conn, u.Path, wsOptions, true)
+	tt, err := newWebsocketTransport(conn, u.Path, wsOptions, true, headers)
 	if nil != err {
 		_ = conn.Close()
 		return nil, err
@@ -115,8 +121,9 @@ func (w *websocketFactory) Listen(options *transport.Options) (transport.Accepto
 }
 
 type acceptEvent struct {
-	conn  net.Conn
-	route string
+	conn    net.Conn
+	route   string
+	headers http.Header
 }
 
 type wsAcceptor struct {
@@ -140,7 +147,7 @@ func (w *wsAcceptor) upgradeHTTP(writer http.ResponseWriter, request *http.Reque
 	case <-w.closedSignal:
 		_ = conn.Close()
 		return
-	case w.incoming <- acceptEvent{conn: conn, route: request.URL.Path}:
+	case w.incoming <- acceptEvent{conn: conn, route: request.URL.Path, headers: request.Header}:
 		// post to acceptor
 	}
 }
@@ -148,7 +155,7 @@ func (w *wsAcceptor) upgradeHTTP(writer http.ResponseWriter, request *http.Reque
 func (w *wsAcceptor) Accept() (transport.Transport, error) {
 	select {
 	case ev := <-w.incoming:
-		tt, err := newWebsocketTransport(ev.conn, ev.route, w.wsOptions, false)
+		tt, err := newWebsocketTransport(ev.conn, ev.route, w.wsOptions, false, ev.headers)
 		if nil != err {
 			_ = ev.conn.Close()
 			return nil, err
