@@ -32,11 +32,14 @@ import (
 
 // DefaultOptions default websocket options
 var DefaultOptions = (&Options{
-	OpCode:   ws.OpText,
-	Dialer:   ws.DefaultDialer,
-	Upgrader: ws.DefaultHTTPUpgrader,
-	ServeMux: http.DefaultServeMux,
-	Backlog:  128,
+	OpCode:            ws.OpText,
+	Dialer:            ws.DefaultDialer,
+	Upgrader:          ws.DefaultHTTPUpgrader,
+	ServeMux:          http.DefaultServeMux,
+	Backlog:           128,
+	NoDelay:           true,
+	CompressLevel:     flate.BestSpeed,
+	CompressThreshold: 512,
 }).Apply()
 
 // Options to define the websocket
@@ -50,6 +53,7 @@ type Options struct {
 	ReadBufferSize    int             `json:"readBufferSize"`
 	WriteBufferSize   int             `json:"writeBufferSize"`
 	Backlog           int             `json:"backlog"`
+	NoDelay           bool            `json:"nodelay"`
 	CompressEnabled   bool            `json:"compressEnabled"`
 	CompressLevel     int             `json:"compressLevel"`
 	CompressThreshold int64           `json:"compressThreshold"`

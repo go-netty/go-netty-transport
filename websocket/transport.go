@@ -18,6 +18,7 @@ package websocket
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/binary"
 	"io"
 	"math/rand"
@@ -47,6 +48,21 @@ type websocketTransport struct {
 }
 
 func newWebsocketTransport(conn net.Conn, route string, wsOptions *Options, client bool, headers http.Header) (*websocketTransport, error) {
+
+	var err error
+	switch t := conn.(type) {
+	case *net.TCPConn:
+		err = t.SetNoDelay(wsOptions.NoDelay)
+	case *tls.Conn:
+		if tc, ok := t.NetConn().(*net.TCPConn); ok {
+			err = tc.SetNoDelay(wsOptions.NoDelay)
+		}
+	}
+
+	if nil != err {
+		return nil, err
+	}
+
 	t := &websocketTransport{
 		Transport: transport.NewTransport(conn, wsOptions.ReadBufferSize, wsOptions.WriteBufferSize),
 		options:   wsOptions,
