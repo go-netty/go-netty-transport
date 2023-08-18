@@ -175,18 +175,17 @@ func (t *websocketTransport) Write(p []byte) (n int, err error) {
 	defer pbytes.Put(packetBuffers)
 
 	// raw payload length
-	dataSize := len(p)
+	var dataSize = len(p)
+	var mask [4]byte
+
+	// xor bytes if client side
+	if t.state.ClientSide() {
+		binary.BigEndian.PutUint32(mask[:], rand.Uint32())
+		xwsutil.FastCipher(p, mask, 0)
+	}
 
 	// pack websocket header
-	var hn, e = t.packHeader(packetBuffers[:ws.MaxHeaderSize], true, func(mask [4]byte) (payloadLength int64, compressed bool, err error) {
-		if t.state.ClientSide() {
-			ws.Cipher(p, mask, 0)
-		}
-		// raw payload length
-		payloadLength = int64(dataSize)
-		return
-	})
-
+	var hn, e = t.packHeader(packetBuffers[:ws.MaxHeaderSize], true, mask, int64(dataSize), false)
 	// pack header failed
 	if nil != e {
 		return 0, e
@@ -209,9 +208,6 @@ func (t *websocketTransport) Write(p []byte) (n int, err error) {
 
 func (t *websocketTransport) writeCompress(p []byte) (n int, err error) {
 
-	headerBuffers := pbytes.GetLen(ws.MaxHeaderSize)
-	defer pbytes.Put(headerBuffers)
-
 	var payloadBuffer *bytes.Buffer
 	var flateWriter *xwsflate.Writer
 	defer func() {
@@ -226,48 +222,55 @@ func (t *websocketTransport) writeCompress(p []byte) (n int, err error) {
 	}()
 
 	// raw payload length
-	dataSize := len(p)
+	var dataSize = len(p)
+	var mask [4]byte
+
+	// xor bytes if client side
+	if t.state.ClientSide() {
+		binary.BigEndian.PutUint32(mask[:], rand.Uint32())
+		xwsutil.FastCipher(p, mask, 0)
+	}
+
+	// raw payload length
+	var payloadLength = int64(dataSize)
+	var compressed bool
+
+	// payload compression
+	if compressed = t.options.CompressEnabled && payloadLength >= t.options.CompressThreshold; compressed {
+		payloadBuffer = pbuffer.Get(int(payloadLength))
+		flateWriter = t.options.flateWriterPool.Get().(*xwsflate.Writer)
+		flateWriter.Reset(payloadBuffer)
+
+		if _, err = flateWriter.Write(p); nil == err {
+			err = flateWriter.Close()
+		}
+		// compressed length
+		payloadLength = int64(payloadBuffer.Len())
+		// compressed data
+		p = payloadBuffer.Bytes()
+	}
+
+	packetBuffers := pbytes.GetLen(ws.MaxHeaderSize + len(p))
+	defer pbytes.Put(packetBuffers)
 
 	// pack websocket header
-	var hn, e = t.packHeader(headerBuffers, true, func(mask [4]byte) (payloadLength int64, compressed bool, err error) {
-		if t.state.ClientSide() {
-			ws.Cipher(p, mask, 0)
-		}
-
-		// raw payload length
-		payloadLength = int64(dataSize)
-		// payload compression
-		if compressed = t.options.CompressEnabled && payloadLength >= t.options.CompressThreshold; compressed {
-			payloadBuffer = pbuffer.Get(int(payloadLength))
-			flateWriter = t.options.flateWriterPool.Get().(*xwsflate.Writer)
-			flateWriter.Reset(payloadBuffer)
-
-			if _, err = flateWriter.Write(p); nil == err {
-				err = flateWriter.Close()
-			}
-			// compressed length
-			payloadLength = int64(payloadBuffer.Len())
-			// compressed data
-			p = payloadBuffer.Bytes()
-		}
-		return
-	})
+	var hn, e = t.packHeader(packetBuffers, true, mask, payloadLength, compressed)
 
 	// pack header failed
 	if nil != e {
 		return 0, e
 	}
 
+	// copy payload
+	hn += copy(packetBuffers[hn:], p)
+
 	t.writeLocker.Lock()
 	defer t.writeLocker.Unlock()
 
-	// write frame header
-	if _, err = t.Transport.Write(headerBuffers[:hn]); nil == err {
-		// write payload body
-		if _, err = t.Transport.Write(p); nil == err {
-			// return unpressed data-size
-			n = dataSize
-		}
+	// write websocket frame
+	if _, err = t.Transport.Write(packetBuffers[:hn]); nil == err {
+		// return data-size
+		n = dataSize
 	}
 	return
 }
@@ -323,7 +326,7 @@ func (t *websocketTransport) Flush() error {
 	return t.Transport.Flush()
 }
 
-func (t *websocketTransport) packHeader(bts []byte, fin bool, getLen func(mask [4]byte) (int64, bool, error)) (n int, err error) {
+func (t *websocketTransport) packHeader(bts []byte, fin bool, mask [4]byte, length int64, compressed bool) (n int, err error) {
 	const (
 		bit0  = 0x80
 		bit1  = 0x40
@@ -331,17 +334,6 @@ func (t *websocketTransport) packHeader(bts []byte, fin bool, getLen func(mask [
 		len16 = int64(^(uint16(0)))
 		len64 = int64(^(uint64(0)) >> 1)
 	)
-
-	var mask [4]byte
-	if t.state.ClientSide() {
-		binary.BigEndian.PutUint32(mask[:], rand.Uint32())
-	}
-
-	var compressed bool
-	var length int64
-	if length, compressed, err = getLen(mask); nil != err {
-		return
-	}
 
 	bts[0] = byte(t.opCode)
 

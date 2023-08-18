@@ -1,6 +1,7 @@
 package xwsutil
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -52,8 +53,9 @@ type Reader struct {
 	frame        io.Reader         // Used to as frame reader.
 	raw          io.LimitedReader  // Used to discard frames without cipher.
 	utf8         wsutil.UTF8Reader // Used to check UTF8 sequences if CheckUTF8 is true.
-	cipherReader *wsutil.CipherReader
+	cipherReader *CipherReader
 	flateReader  *xwsflate.Reader
+	headerBuff   [ws.MaxHeaderSize]byte
 }
 
 // NewReader creates new frame reader that reads from r keeping given state to
@@ -159,7 +161,7 @@ func (r *Reader) Discard() (err error) {
 // Note that next NextFrame() call must be done after receiving or discarding
 // all current message bytes.
 func (r *Reader) NextFrame() (hdr ws.Header, err error) {
-	hdr, err = ws.ReadHeader(r.Source)
+	hdr, err = ReadHeader(r.Source, r.headerBuff[:])
 	if err == io.EOF && r.fragmented() {
 		// If we are in fragmented state EOF means that is was totally
 		// unexpected.
@@ -203,7 +205,7 @@ func (r *Reader) NextFrame() (hdr ws.Header, err error) {
 
 	if hdr.Masked {
 		if nil == r.cipherReader {
-			r.cipherReader = wsutil.NewCipherReader(frame, hdr.Mask)
+			r.cipherReader = NewCipherReader(frame, hdr.Mask)
 		} else {
 			r.cipherReader.Reset(frame, hdr.Mask)
 		}
@@ -309,4 +311,95 @@ func NextReader(r io.Reader, s ws.State) (ws.Header, io.Reader, error) {
 		return header, nil, err
 	}
 	return header, rd, nil
+}
+
+// ReadHeader reads a frame header from r.
+func ReadHeader(r io.Reader, bts []byte) (h ws.Header, err error) {
+	const (
+		bit0 = 0x80
+		bit1 = 0x40
+		bit2 = 0x20
+		bit3 = 0x10
+		bit4 = 0x08
+		bit5 = 0x04
+		bit6 = 0x02
+		bit7 = 0x01
+
+		len7  = int64(125)
+		len16 = int64(^(uint16(0)))
+		len64 = int64(^(uint64(0)) >> 1)
+	)
+
+	// Make slice of bytes with capacity 12 that could hold any header.
+	//
+	// The maximum header size is 14, but due to the 2 hop reads,
+	// after first hop that reads first 2 constant bytes, we could reuse 2 bytes.
+	// So 14 - 2 = 12.
+	//bts := make([]byte, 2, ws.MaxHeaderSize-2)
+	bts = bts[: 2 : ws.MaxHeaderSize-2]
+
+	// Prepare to hold first 2 bytes to choose size of next read.
+	_, err = io.ReadFull(r, bts)
+	if err != nil {
+		return h, err
+	}
+
+	h.Fin = bts[0]&bit0 != 0
+	h.Rsv = (bts[0] & 0x70) >> 4
+	h.OpCode = ws.OpCode(bts[0] & 0x0f)
+
+	var extra int
+
+	if bts[1]&bit0 != 0 {
+		h.Masked = true
+		extra += 4
+	}
+
+	length := bts[1] & 0x7f
+	switch {
+	case length < 126:
+		h.Length = int64(length)
+
+	case length == 126:
+		extra += 2
+
+	case length == 127:
+		extra += 8
+
+	default:
+		err = ws.ErrHeaderLengthUnexpected
+		return h, err
+	}
+
+	if extra == 0 {
+		return h, err
+	}
+
+	// Increase len of bts to extra bytes need to read.
+	// Overwrite first 2 bytes that was read before.
+	bts = bts[:extra]
+	_, err = io.ReadFull(r, bts)
+	if err != nil {
+		return h, err
+	}
+
+	switch {
+	case length == 126:
+		h.Length = int64(binary.BigEndian.Uint16(bts[:2]))
+		bts = bts[2:]
+
+	case length == 127:
+		if bts[0]&0x80 != 0 {
+			err = ws.ErrHeaderLengthMSB
+			return h, err
+		}
+		h.Length = int64(binary.BigEndian.Uint64(bts[:8]))
+		bts = bts[8:]
+	}
+
+	if h.Masked {
+		copy(h.Mask[:], bts)
+	}
+
+	return h, nil
 }
