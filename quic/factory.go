@@ -19,8 +19,8 @@ package quic
 import (
 	"net"
 
+	"github.com/go-netty/go-netty-transport/quic/internal/quick"
 	"github.com/go-netty/go-netty/transport"
-	"github.com/smallnest/quick"
 )
 
 // New quic transport factory

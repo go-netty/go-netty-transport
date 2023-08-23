@@ -68,10 +68,12 @@ func (c ControlHandler) HandlePing(h ws.Header) error {
 	}
 
 	// In other way reply with Pong frame with copied payload.
-	p := pbytes.GetLen(int(h.Length) + ws.HeaderSize(ws.Header{
+	bufSize := int(h.Length) + ws.HeaderSize(ws.Header{
 		Length: h.Length,
 		Masked: c.State.ClientSide(),
-	}))
+	})
+
+	p := pbytes.Get(bufSize)
 	defer pbytes.Put(p)
 
 	c.WriterLocker.Lock()
@@ -86,7 +88,7 @@ func (c ControlHandler) HandlePing(h ws.Header) error {
 	//
 	// NOTE: We prefer ControlWriter with preallocated buffer to
 	// ws.WriteHeader because it performs one syscall instead of two.
-	w := wsutil.NewControlWriterBuffer(c.Dst, c.State, ws.OpPong, p)
+	w := wsutil.NewControlWriterBuffer(c.Dst, c.State, ws.OpPong, (*p)[:bufSize])
 	r := c.Src
 	if c.State.ServerSide() && !c.DisableSrcCiphering {
 		r = wsutil.NewCipherReader(r, h.Mask)
@@ -106,14 +108,14 @@ func (c ControlHandler) HandlePong(h ws.Header) error {
 		return nil
 	}
 
-	buf := pbytes.GetLen(int(h.Length))
+	buf := pbytes.Get(int(h.Length))
 	defer pbytes.Put(buf)
 
 	// Discard pong message according to the RFC6455:
 	// A Pong frame MAY be sent unsolicited. This serves as a
 	// unidirectional heartbeat. A response to an unsolicited Pong frame
 	// is not expected.
-	_, err := io.CopyBuffer(ioutil.Discard, c.Src, buf)
+	_, err := io.CopyBuffer(ioutil.Discard, c.Src, (*buf)[:h.Length])
 
 	return err
 }
@@ -146,14 +148,15 @@ func (c ControlHandler) HandleClose(h ws.Header) error {
 	}
 
 	// Prepare bytes both for reading reason and sending response.
-	p := pbytes.GetLen(int(h.Length) + ws.HeaderSize(ws.Header{
+	bufSize := int(h.Length) + ws.HeaderSize(ws.Header{
 		Length: h.Length,
 		Masked: c.State.ClientSide(),
-	}))
+	})
+	p := pbytes.Get(bufSize)
 	defer pbytes.Put(p)
 
 	// Get the subslice to read the frame payload out.
-	subp := p[:h.Length]
+	subp := (*p)[:h.Length]
 
 	r := c.Src
 	if c.State.ServerSide() && !c.DisableSrcCiphering {
@@ -184,14 +187,14 @@ func (c ControlHandler) HandleClose(h ws.Header) error {
 	//
 	// NOTE: We prefer ControlWriter with preallocated buffer to
 	// ws.WriteHeader because it performs one syscall instead of two.
-	w := wsutil.NewControlWriterBuffer(c.Dst, c.State, ws.OpClose, p)
+	w := wsutil.NewControlWriterBuffer(c.Dst, c.State, ws.OpClose, (*p)[:bufSize])
 
 	// RFC6455#5.5.1:
 	// If an endpoint receives a Close frame and did not previously
 	// send a Close frame, the endpoint MUST send a Close frame in
 	// response. (When sending a Close frame in response, the endpoint
 	// typically echoes the status code it received.)
-	_, err := w.Write(p[:2])
+	_, err := w.Write((*p)[:2])
 	if err != nil {
 		return err
 	}

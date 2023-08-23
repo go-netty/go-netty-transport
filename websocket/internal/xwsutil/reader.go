@@ -8,7 +8,6 @@ import (
 
 	"github.com/go-netty/go-netty-transport/websocket/internal/xwsflate"
 	"github.com/gobwas/ws"
-	"github.com/gobwas/ws/wsflate"
 	"github.com/gobwas/ws/wsutil"
 )
 
@@ -191,7 +190,8 @@ func (r *Reader) NextFrame() (hdr ws.Header, err error) {
 	}
 
 	frame := io.Reader(&r.raw)
-	compressed, err := wsflate.IsCompressed(hdr)
+	//compressed, err := wsflate.IsCompressed(hdr)
+	compressed := hdr.Rsv1()
 	switch {
 	case nil != err:
 		return hdr, err

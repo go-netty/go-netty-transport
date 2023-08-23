@@ -171,7 +171,7 @@ func (t *websocketTransport) Write(p []byte) (n int, err error) {
 		return t.writeCompress(p)
 	}
 
-	packetBuffers := pbytes.GetLen(ws.MaxHeaderSize + len(p))
+	packetBuffers := pbytes.Get(ws.MaxHeaderSize + len(p))
 	defer pbytes.Put(packetBuffers)
 
 	// raw payload length
@@ -185,20 +185,20 @@ func (t *websocketTransport) Write(p []byte) (n int, err error) {
 	}
 
 	// pack websocket header
-	var hn, e = t.packHeader(packetBuffers[:ws.MaxHeaderSize], true, mask, int64(dataSize), false)
+	var hn, e = t.packHeader((*packetBuffers)[:ws.MaxHeaderSize], true, mask, int64(dataSize), false)
 	// pack header failed
 	if nil != e {
 		return 0, e
 	}
 
 	// copy payload
-	hn += copy(packetBuffers[hn:], p)
+	hn += copy((*packetBuffers)[hn:hn+len(p)], p)
 
 	t.writeLocker.Lock()
 	defer t.writeLocker.Unlock()
 
 	// write websocket frame
-	if _, err = t.Transport.Write(packetBuffers[:hn]); nil == err {
+	if _, err = t.Transport.Write((*packetBuffers)[:hn]); nil == err {
 		// return data-size
 		n = dataSize
 	}
@@ -250,11 +250,11 @@ func (t *websocketTransport) writeCompress(p []byte) (n int, err error) {
 		p = payloadBuffer.Bytes()
 	}
 
-	packetBuffers := pbytes.GetLen(ws.MaxHeaderSize + len(p))
+	packetBuffers := pbytes.Get(ws.MaxHeaderSize + len(p))
 	defer pbytes.Put(packetBuffers)
 
 	// pack websocket header
-	var hn, e = t.packHeader(packetBuffers, true, mask, payloadLength, compressed)
+	var hn, e = t.packHeader((*packetBuffers)[:ws.MaxHeaderSize], true, mask, payloadLength, compressed)
 
 	// pack header failed
 	if nil != e {
@@ -262,13 +262,13 @@ func (t *websocketTransport) writeCompress(p []byte) (n int, err error) {
 	}
 
 	// copy payload
-	hn += copy(packetBuffers[hn:], p)
+	hn += copy((*packetBuffers)[hn:hn+len(p)], p)
 
 	t.writeLocker.Lock()
 	defer t.writeLocker.Unlock()
 
 	// write websocket frame
-	if _, err = t.Transport.Write(packetBuffers[:hn]); nil == err {
+	if _, err = t.Transport.Write((*packetBuffers)[:hn]); nil == err {
 		// return data-size
 		n = dataSize
 	}
