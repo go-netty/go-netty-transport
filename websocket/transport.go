@@ -312,6 +312,13 @@ func (t *websocketTransport) Writev(buffs transport.Buffers) (int64, error) {
 func (t *websocketTransport) WriteClose(code int, reason string) (err error) {
 	closeFrame := ws.NewCloseFrame(ws.NewCloseFrameBody(ws.StatusCode(code), reason))
 
+	// xor bytes if client side
+	if t.state.ClientSide() {
+		closeFrame.Header.Masked = true
+		binary.BigEndian.PutUint32(closeFrame.Header.Mask[:], rand.Uint32())
+		xwsutil.FastCipher(closeFrame.Payload, closeFrame.Header.Mask, 0)
+	}
+
 	t.writeLocker.Lock()
 	defer t.writeLocker.Unlock()
 	if err = ws.WriteFrame(t.Transport, closeFrame); nil == err {
