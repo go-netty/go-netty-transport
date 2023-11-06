@@ -82,16 +82,6 @@ func (o *Options) Apply() *Options {
 		}
 	}
 
-	if nil == o.Upgrader.Negotiate {
-		e := wsflate.Extension{
-			Parameters: wsflate.Parameters{
-				ServerNoContextTakeover: true,
-				ClientNoContextTakeover: true,
-			},
-		}
-		o.Upgrader.Negotiate = e.Negotiate
-	}
-
 	if "" != o.CertFile && "" != o.KeyFile {
 		if cer, err := tls.LoadX509KeyPair(o.CertFile, o.KeyFile); nil != err {
 			panic(err)
