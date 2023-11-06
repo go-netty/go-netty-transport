@@ -7,7 +7,6 @@ import (
 	"github.com/go-netty/go-netty"
 	"github.com/go-netty/go-netty/transport"
 	"github.com/gobwas/ws"
-	"github.com/gobwas/ws/wsflate"
 )
 
 type Upgrader interface {
@@ -32,21 +31,13 @@ func NewHTTPUpgrader(engine netty.Bootstrap, option ...transport.Option) HTTPUpg
 		panic(err)
 	}
 
-	e := wsflate.Extension{
-		Parameters: wsflate.Parameters{
-			ServerNoContextTakeover: true,
-			ClientNoContextTakeover: true,
-		},
-	}
-
-	upgrader := ws.HTTPUpgrader{}
-	upgrader.Negotiate = e.Negotiate
+	wsOptions := FromContext(options.Context, DefaultOptions)
 
 	return HTTPUpgrader{
-		Upgrader:   upgrader,
+		Upgrader:   wsOptions.Upgrader,
 		ctx:        options.Context,
 		attachment: options.Attachment,
-		options:    FromContext(options.Context, DefaultOptions),
+		options:    wsOptions,
 		serve:      engine.(channelServe),
 	}
 }
