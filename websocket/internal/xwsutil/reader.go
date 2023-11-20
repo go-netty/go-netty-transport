@@ -190,6 +190,16 @@ func (r *Reader) NextFrame() (hdr ws.Header, err error) {
 	}
 
 	frame := io.Reader(&r.raw)
+
+	if hdr.Masked {
+		if nil == r.cipherReader {
+			r.cipherReader = NewCipherReader(frame, hdr.Mask)
+		} else {
+			r.cipherReader.Reset(frame, hdr.Mask)
+		}
+		frame = r.cipherReader
+	}
+
 	//compressed, err := wsflate.IsCompressed(hdr)
 	compressed := hdr.Rsv1()
 	switch {
@@ -201,15 +211,6 @@ func (r *Reader) NextFrame() (hdr ws.Header, err error) {
 		}
 		r.flateReader = r.GetFlateReader(frame)
 		frame = r.flateReader
-	}
-
-	if hdr.Masked {
-		if nil == r.cipherReader {
-			r.cipherReader = NewCipherReader(frame, hdr.Mask)
-		} else {
-			r.cipherReader.Reset(frame, hdr.Mask)
-		}
-		frame = r.cipherReader
 	}
 
 	for _, x := range r.Extensions {

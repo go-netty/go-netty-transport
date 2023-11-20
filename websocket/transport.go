@@ -223,13 +223,6 @@ func (t *websocketTransport) writeCompress(p []byte) (n int, err error) {
 
 	// raw payload length
 	var dataSize = len(p)
-	var mask [4]byte
-
-	// xor bytes if client side
-	if t.state.ClientSide() {
-		binary.BigEndian.PutUint32(mask[:], rand.Uint32())
-		xwsutil.FastCipher(p, mask, 0)
-	}
 
 	// raw payload length
 	var payloadLength = int64(dataSize)
@@ -242,12 +235,19 @@ func (t *websocketTransport) writeCompress(p []byte) (n int, err error) {
 		flateWriter.Reset(payloadBuffer)
 
 		if _, err = flateWriter.Write(p); nil == err {
-			err = flateWriter.Close()
+			err = flateWriter.Flush()
 		}
 		// compressed length
 		payloadLength = int64(payloadBuffer.Len())
 		// compressed data
 		p = payloadBuffer.Bytes()
+	}
+
+	var mask [4]byte
+	// xor bytes if client side
+	if t.state.ClientSide() {
+		binary.BigEndian.PutUint32(mask[:], rand.Uint32())
+		xwsutil.FastCipher(p, mask, 0)
 	}
 
 	packetBuffers := pbytes.Get(ws.MaxHeaderSize + len(p))

@@ -26,6 +26,7 @@ import (
 
 	"github.com/go-netty/go-netty-transport/websocket/internal/xwsflate"
 	"github.com/go-netty/go-netty/transport"
+	"github.com/gobwas/httphead"
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsflate"
 )
@@ -79,6 +80,19 @@ func (o *Options) Apply() *Options {
 				w, _ := flate.NewWriter(writer, compressLv)
 				return w
 			})
+		}
+
+		if nil == o.Upgrader.Negotiate {
+			o.Upgrader.Negotiate = func(option httphead.Option) (httphead.Option, error) {
+				e := wsflate.Extension{
+					Parameters: wsflate.DefaultParameters,
+				}
+				return e.Negotiate(option)
+			}
+		}
+
+		if nil == o.Dialer.Extensions {
+			o.Dialer.Extensions = []httphead.Option{wsflate.DefaultParameters.Option()}
 		}
 	}
 
