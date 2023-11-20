@@ -6,7 +6,9 @@ import (
 
 	"github.com/go-netty/go-netty"
 	"github.com/go-netty/go-netty/transport"
+	"github.com/gobwas/httphead"
 	"github.com/gobwas/ws"
+	"github.com/gobwas/ws/wsflate"
 )
 
 type Upgrader interface {
@@ -32,6 +34,15 @@ func NewHTTPUpgrader(engine netty.Bootstrap, option ...transport.Option) HTTPUpg
 	}
 
 	wsOptions := FromContext(options.Context, DefaultOptions)
+
+	if wsOptions.CompressEnabled && nil == wsOptions.Upgrader.Negotiate {
+		wsOptions.Upgrader.Negotiate = func(option httphead.Option) (httphead.Option, error) {
+			e := wsflate.Extension{
+				Parameters: wsflate.DefaultParameters,
+			}
+			return e.Negotiate(option)
+		}
+	}
 
 	return HTTPUpgrader{
 		Upgrader:   wsOptions.Upgrader,
