@@ -45,14 +45,16 @@ func (w *websocketFactory) Connect(options *transport.Options) (transport.Transp
 
 	wsOptions := FromContext(options.Context, DefaultOptions)
 
+	wsDialer := wsOptions.Dialer // copy dialer
+
 	headers := make(http.Header)
-	wsOptions.Dialer.OnHeader = func(key, value []byte) (err error) {
+	wsDialer.OnHeader = func(key, value []byte) (err error) {
 		headers.Add(string(key), string(value))
 		return nil
 	}
 
 	u := &url.URL{Scheme: options.Address.Scheme, Host: options.Address.Host, Path: options.Address.Path}
-	conn, _, _, err := wsOptions.Dialer.Dial(options.Context, u.String())
+	conn, _, _, err := wsDialer.Dial(options.Context, u.String())
 	if nil != err {
 		return nil, err
 	}
