@@ -2,16 +2,16 @@ module github.com/go-netty/go-netty-transport
 
 go 1.21
 
-toolchain go1.22.0
+toolchain go1.21.0
 
 require (
-	github.com/go-netty/go-netty v1.6.4
+	github.com/go-netty/go-netty v1.6.5
 	github.com/gobwas/httphead v0.1.0
 	github.com/gobwas/ws v1.3.2
 	github.com/libp2p/go-reuseport v0.4.0
-	github.com/quic-go/quic-go v0.41.0
-	github.com/xtaci/kcp-go/v5 v5.6.7
-	golang.org/x/crypto v0.17.0
+	github.com/quic-go/quic-go v0.42.0
+	github.com/xtaci/kcp-go/v5 v5.6.8
+	golang.org/x/crypto v0.21.0
 )
 
 require (
@@ -25,11 +25,11 @@ require (
 	github.com/templexxx/cpu v0.1.0 // indirect
 	github.com/templexxx/xorsimd v0.4.2 // indirect
 	github.com/tjfoc/gmsm v1.4.1 // indirect
-	go.uber.org/mock v0.3.0 // indirect
+	go.uber.org/mock v0.4.0 // indirect
 	golang.org/x/exp v0.0.0-20221205204356-47842c84f3db // indirect
 	golang.org/x/mod v0.11.0 // indirect
-	golang.org/x/net v0.19.0 // indirect
-	golang.org/x/sys v0.15.0 // indirect
+	golang.org/x/net v0.21.0 // indirect
+	golang.org/x/sys v0.18.0 // indirect
 	golang.org/x/tools v0.9.1 // indirect
 )
 
