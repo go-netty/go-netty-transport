@@ -52,7 +52,7 @@ func newKcpTransport(conn *kcp.UDPSession, kcpOptions *Options, client bool) (*k
 }
 
 func (t *kcpTransport) Writev(buffs transport.Buffers) (int64, error) {
-	n, err := t.UDPSession.WriteBuffers(buffs.Buffers)
+	n, err := t.UDPSession.WriteBuffers(buffs)
 	return int64(n), err
 }
 

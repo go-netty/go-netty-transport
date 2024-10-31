@@ -19,7 +19,6 @@ package udp
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 
 	"github.com/go-netty/go-netty/transport"
@@ -34,15 +33,11 @@ type udpClientTransport struct {
 }
 
 func (u *udpClientTransport) Writev(buffs transport.Buffers) (n int64, err error) {
-	var i = 0
-	for _, j := range buffs.Indexes {
+	for _, pkt := range buffs {
 
-		pkt := buffs.Buffers[i:j]
-		i = j
-
-		sent, e := pkt.WriteTo(u.UDPConn)
+		sent, e := u.UDPConn.Write(pkt)
 		if sent > 0 {
-			n += sent
+			n += int64(sent)
 		}
 
 		if nil != e {
@@ -84,20 +79,9 @@ func (u *udpServerTransport) RemoteAddr() net.Addr {
 }
 
 func (u *udpServerTransport) Writev(buffs transport.Buffers) (n int64, err error) {
-	var i = 0
-	for _, j := range buffs.Indexes {
+	for _, pkt := range buffs {
 
-		pkt := buffs.Buffers[i:j]
-		i = j
-
-		var packet = pkt[0]
-		if len(pkt) > 1 {
-			if packet, err = ioutil.ReadAll(&pkt); err != nil {
-				return
-			}
-		}
-
-		sent, e := u.UDPConn.WriteToUDP(packet, u.raddr)
+		sent, e := u.UDPConn.WriteToUDP(pkt, u.raddr)
 		if sent > 0 {
 			n += int64(sent)
 		}

@@ -29,7 +29,6 @@ import (
 	"github.com/go-netty/go-netty-transport/websocket/internal/xwsflate"
 	"github.com/go-netty/go-netty-transport/websocket/internal/xwsutil"
 	"github.com/go-netty/go-netty/transport"
-	"github.com/go-netty/go-netty/utils"
 	"github.com/go-netty/go-netty/utils/pool/pbuffer"
 	"github.com/go-netty/go-netty/utils/pool/pbytes"
 	"github.com/gobwas/ws"
@@ -277,33 +276,12 @@ func (t *websocketTransport) writeCompress(p []byte) (n int, err error) {
 
 func (t *websocketTransport) Writev(buffs transport.Buffers) (int64, error) {
 
-	var i = 0
 	var writeSize int64
-	for _, j := range buffs.Indexes {
-
-		pkt := buffs.Buffers[i:j]
-		i = j
-
-		switch len(pkt) {
-		case 1:
-			writeSize += int64(len(pkt[0]))
-			if _, err := t.Write(pkt[0]); nil != err {
-				return 0, err
-			}
-		default:
-			pktSize := utils.CountOf(pkt)
-			dataBuffer := pbuffer.Get(int(pktSize))
-			for _, p := range pkt {
-				dataBuffer.Write(p)
-			}
-			writeSize += int64(dataBuffer.Len())
-
-			if _, err := t.Write(dataBuffer.Bytes()); nil != err {
-				pbuffer.Put(dataBuffer)
-				return 0, err
-			}
-			pbuffer.Put(dataBuffer)
+	for _, pkt := range buffs {
+		if _, err := t.Write(pkt); nil != err {
+			return 0, err
 		}
+		writeSize += int64(len(pkt))
 	}
 
 	return writeSize, nil
