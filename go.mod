@@ -7,7 +7,7 @@ require (
 	github.com/gobwas/httphead v0.1.0
 	github.com/gobwas/ws v1.4.0
 	github.com/libp2p/go-reuseport v0.4.0
-	github.com/quic-go/quic-go v0.48.1
+	github.com/quic-go/quic-go v0.48.2
 	github.com/xtaci/kcp-go/v5 v5.6.18
 	golang.org/x/crypto v0.28.0
 )

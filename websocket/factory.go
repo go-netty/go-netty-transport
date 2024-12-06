@@ -59,7 +59,20 @@ func (w *websocketFactory) Connect(options *transport.Options) (transport.Transp
 		return nil, err
 	}
 
-	tt, err := newWebsocketTransport(conn, u.Path, wsOptions, true, headers)
+	request := &http.Request{
+		Method:     http.MethodGet,
+		URL:        u,
+		Proto:      "HTTP/1.1",
+		ProtoMajor: 1,
+		ProtoMinor: 1,
+		Header:     headers,
+		Body:       http.NoBody,
+		Host:       u.Host,
+		RemoteAddr: conn.RemoteAddr().String(),
+		RequestURI: u.RequestURI(),
+	}
+
+	tt, err := newWebsocketTransport(conn, wsOptions, true, request)
 	if nil != err {
 		_ = conn.Close()
 		return nil, err
@@ -124,8 +137,7 @@ func (w *websocketFactory) Listen(options *transport.Options) (transport.Accepto
 
 type acceptEvent struct {
 	conn    net.Conn
-	route   string
-	headers http.Header
+	request *http.Request
 }
 
 type wsAcceptor struct {
@@ -149,7 +161,7 @@ func (w *wsAcceptor) upgradeHTTP(writer http.ResponseWriter, request *http.Reque
 	case <-w.closedSignal:
 		_ = conn.Close()
 		return
-	case w.incoming <- acceptEvent{conn: conn, route: request.URL.Path, headers: request.Header}:
+	case w.incoming <- acceptEvent{conn: conn, request: request}:
 		// post to acceptor
 	}
 }
@@ -157,7 +169,7 @@ func (w *wsAcceptor) upgradeHTTP(writer http.ResponseWriter, request *http.Reque
 func (w *wsAcceptor) Accept() (transport.Transport, error) {
 	select {
 	case ev := <-w.incoming:
-		tt, err := newWebsocketTransport(ev.conn, ev.route, w.wsOptions, false, ev.headers)
+		tt, err := newWebsocketTransport(ev.conn, w.wsOptions, false, ev.request)
 		if nil != err {
 			_ = ev.conn.Close()
 			return nil, err

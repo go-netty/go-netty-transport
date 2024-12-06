@@ -39,14 +39,13 @@ type websocketTransport struct {
 	options     *Options
 	state       ws.State  // StateClientSide or StateServerSide
 	opCode      ws.OpCode // OpText or OpBinary
-	route       string
-	headers     http.Header
+	request     *http.Request
 	reader      *xwsutil.Reader
 	msgReader   io.Reader
 	writeLocker sync.Mutex
 }
 
-func newWebsocketTransport(conn net.Conn, route string, wsOptions *Options, client bool, headers http.Header) (*websocketTransport, error) {
+func newWebsocketTransport(conn net.Conn, wsOptions *Options, client bool, request *http.Request) (*websocketTransport, error) {
 
 	var err error
 	switch t := conn.(type) {
@@ -65,8 +64,7 @@ func newWebsocketTransport(conn net.Conn, route string, wsOptions *Options, clie
 	t := &websocketTransport{
 		Transport: transport.NewTransport(conn, wsOptions.ReadBufferSize, wsOptions.WriteBufferSize),
 		options:   wsOptions,
-		route:     route,
-		headers:   headers,
+		request:   request,
 	}
 
 	// setup opcode
@@ -101,11 +99,15 @@ func newWebsocketTransport(conn net.Conn, route string, wsOptions *Options, clie
 }
 
 func (t *websocketTransport) Route() string {
-	return t.route
+	return t.request.URL.Path
 }
 
 func (t *websocketTransport) Header() http.Header {
-	return t.headers
+	return t.request.Header
+}
+
+func (t *websocketTransport) Request() *http.Request {
+	return t.request
 }
 
 // Read implements io.Reader. It reads the next message payload into p.
