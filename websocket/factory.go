@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/go-netty/go-netty/transport"
+	"github.com/gobwas/ws"
 )
 
 // New websocket transport factory
@@ -54,7 +55,7 @@ func (w *websocketFactory) Connect(options *transport.Options) (transport.Transp
 	}
 
 	u := &url.URL{Scheme: options.Address.Scheme, Host: options.Address.Host, Path: options.Address.Path}
-	conn, _, _, err := wsDialer.Dial(options.Context, u.String())
+	conn, _, hs, err := wsDialer.Dial(options.Context, u.String())
 	if nil != err {
 		return nil, err
 	}
@@ -72,7 +73,7 @@ func (w *websocketFactory) Connect(options *transport.Options) (transport.Transp
 		RequestURI: u.RequestURI(),
 	}
 
-	tt, err := newWebsocketTransport(conn, wsOptions, true, request)
+	tt, err := newWebsocketTransport(conn, wsOptions, true, request, hs)
 	if nil != err {
 		_ = conn.Close()
 		return nil, err
@@ -138,6 +139,7 @@ func (w *websocketFactory) Listen(options *transport.Options) (transport.Accepto
 type acceptEvent struct {
 	conn    net.Conn
 	request *http.Request
+	hs      ws.Handshake
 }
 
 type wsAcceptor struct {
@@ -149,7 +151,7 @@ type wsAcceptor struct {
 
 func (w *wsAcceptor) upgradeHTTP(writer http.ResponseWriter, request *http.Request) {
 
-	conn, _, _, err := w.wsOptions.Upgrader.Upgrade(request, writer)
+	conn, _, hs, err := w.wsOptions.Upgrader.Upgrade(request, writer)
 	if nil != err {
 		if nil != conn {
 			_ = conn.Close()
@@ -161,7 +163,7 @@ func (w *wsAcceptor) upgradeHTTP(writer http.ResponseWriter, request *http.Reque
 	case <-w.closedSignal:
 		_ = conn.Close()
 		return
-	case w.incoming <- acceptEvent{conn: conn, request: request}:
+	case w.incoming <- acceptEvent{conn: conn, request: request, hs: hs}:
 		// post to acceptor
 	}
 }
@@ -169,7 +171,7 @@ func (w *wsAcceptor) upgradeHTTP(writer http.ResponseWriter, request *http.Reque
 func (w *wsAcceptor) Accept() (transport.Transport, error) {
 	select {
 	case ev := <-w.incoming:
-		tt, err := newWebsocketTransport(ev.conn, w.wsOptions, false, ev.request)
+		tt, err := newWebsocketTransport(ev.conn, w.wsOptions, false, ev.request, ev.hs)
 		if nil != err {
 			_ = ev.conn.Close()
 			return nil, err

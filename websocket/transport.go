@@ -24,14 +24,17 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"strconv"
 	"sync"
 
-	"github.com/go-netty/go-netty-transport/websocket/internal/xwsflate"
-	"github.com/go-netty/go-netty-transport/websocket/internal/xwsutil"
+	"github.com/go-netty/go-netty-transport/websocket/internal/wsutils"
 	"github.com/go-netty/go-netty/transport"
 	"github.com/go-netty/go-netty/utils/pool/pbuffer"
 	"github.com/go-netty/go-netty/utils/pool/pbytes"
 	"github.com/gobwas/ws"
+	"github.com/gobwas/ws/wsflate"
+	"github.com/gobwas/ws/wsutil"
+	kpflate "github.com/klauspost/compress/flate"
 )
 
 type websocketTransport struct {
@@ -40,12 +43,23 @@ type websocketTransport struct {
 	state       ws.State  // StateClientSide or StateServerSide
 	opCode      ws.OpCode // OpText or OpBinary
 	request     *http.Request
-	reader      *xwsutil.Reader
+	reader      *wsutils.FrameReader
 	msgReader   io.Reader
 	writeLocker sync.Mutex
+	// negotiated compression params for this connection
+	negotiated struct {
+		enabled             bool
+		clientNoContextTake bool
+		serverNoContextTake bool
+		clientMaxWindowBits int
+		serverMaxWindowBits int
+	}
+	// persistent flate instances (used when context takeover is allowed)
+	persistentFlateReader *wsutils.FlateReader
+	persistentFlateWriter *wsutils.FlateWriter
 }
 
-func newWebsocketTransport(conn net.Conn, wsOptions *Options, client bool, request *http.Request) (*websocketTransport, error) {
+func newWebsocketTransport(conn net.Conn, wsOptions *Options, client bool, request *http.Request, hs ws.Handshake) (*websocketTransport, error) {
 
 	var err error
 	switch t := conn.(type) {
@@ -77,22 +91,95 @@ func newWebsocketTransport(conn net.Conn, wsOptions *Options, client bool, reque
 		t.state = ws.StateClientSide
 	}
 	// message reader
-	t.reader = &xwsutil.Reader{
+	t.reader = &wsutils.FrameReader{
 		Source:          t.Transport,
 		State:           t.state | ws.StateExtended,
 		CheckUTF8:       wsOptions.CheckUTF8,
 		SkipHeaderCheck: false,
 		MaxFrameSize:    wsOptions.MaxFrameSize,
-		OnIntermediate:  xwsutil.ControlFrameHandler(t.Transport, &t.writeLocker, t.state),
-		GetFlateReader: func(reader io.Reader) *xwsflate.Reader {
-			flateReader := t.options.flateReaderPool.Get().(*xwsflate.Reader)
+		OnIntermediate:  wsutils.ControlFrameHandler(t.Transport, &t.writeLocker, t.state),
+		GetFlateReader: func(reader io.Reader) *wsutils.FlateReader {
+			flateReader := t.options.flateReaderPool.Get().(*wsutils.FlateReader)
 			flateReader.Reset(reader)
 			return flateReader
 		},
-		PutFlateReader: func(reader *xwsflate.Reader) {
+		PutFlateReader: func(reader *wsutils.FlateReader) {
 			reader.Reset(nil)
 			t.options.flateReaderPool.Put(reader)
 		},
+	}
+
+	// If handshake response includes negotiated extensions, parse them.
+	if len(hs.Extensions) > 0 {
+		parsePerMessageDeflate(hs, &t.negotiated)
+	}
+
+	// If compression is enabled (globally) and negotiated on this connection,
+	// configure reader/writer behavior. We add a RecvExtension that clears
+	// RSV1 so subsequent processing won't see extension bits.
+	if t.options.CompressEnabled && t.negotiated.enabled {
+		t.reader.Extensions = []wsutil.RecvExtension{perMessageDeflateRecvExt{}}
+
+		// If peer allows context takeover (peer is sender of compressed frames),
+		// try to keep a persistent flate reader to reuse between messages.
+		peerNoCtx := false
+		if t.state.ServerSide() {
+			// peer is client
+			peerNoCtx = t.negotiated.clientNoContextTake
+		} else {
+			// peer is server
+			peerNoCtx = t.negotiated.serverNoContextTake
+		}
+
+		if !peerNoCtx {
+			// reuse a flate reader for multiple messages
+			fr := t.options.flateReaderPool.Get().(*wsutils.FlateReader)
+			// initialize with nil; GetFlateReader will Reset with real reader later
+			fr.Reset(nil)
+			t.persistentFlateReader = fr
+			// override Get/Put to use persistent reader and avoid putting it back
+			t.reader.GetFlateReader = func(reader io.Reader) *wsutils.FlateReader {
+				t.persistentFlateReader.Reset(reader)
+				return t.persistentFlateReader
+			}
+			t.reader.PutFlateReader = func(reader *wsutils.FlateReader) {
+				// no-op: do not return persistent reader to pool now
+			}
+		}
+
+		// For writer side: if we are allowed to keep context takeover for our
+		// outgoing messages, create persistent writer to reuse; otherwise use pool per message.
+		ourNoCtx := false
+		if t.state.ServerSide() {
+			// we are server => our side corresponds to server params
+			ourNoCtx = t.negotiated.serverNoContextTake
+		} else {
+			ourNoCtx = t.negotiated.clientNoContextTake
+		}
+		if !ourNoCtx {
+			// create persistent writer
+			// If negotiated max window bits for our side is present, use
+			// klauspost's flate writer with the requested window size.
+			ourWindowBits := 0
+			if t.state.ServerSide() {
+				ourWindowBits = t.negotiated.serverMaxWindowBits
+			} else {
+				ourWindowBits = t.negotiated.clientMaxWindowBits
+			}
+
+			if ourWindowBits > 0 {
+				windowSize := 1 << uint(ourWindowBits)
+				fw := wsutils.NewFlateWriter(nil, func(w io.Writer) wsflate.Compressor {
+					wp, _ := kpflate.NewWriterWindow(w, windowSize)
+					return wp
+				})
+				t.persistentFlateWriter = fw
+			} else {
+				fw := t.options.flateWriterPool.Get().(*wsutils.FlateWriter)
+				fw.Reset(nil)
+				t.persistentFlateWriter = fw
+			}
+		}
 	}
 
 	return t, nil
@@ -168,7 +255,7 @@ func (t *websocketTransport) Read(p []byte) (int, error) {
 
 func (t *websocketTransport) Write(p []byte) (n int, err error) {
 
-	if compressed := t.options.CompressEnabled && int64(len(p)) >= t.options.CompressThreshold; compressed {
+	if compressed := t.options.CompressEnabled && t.negotiated.enabled && int64(len(p)) >= t.options.CompressThreshold; compressed {
 		return t.writeCompress(p)
 	}
 
@@ -182,7 +269,7 @@ func (t *websocketTransport) Write(p []byte) (n int, err error) {
 	// xor bytes if client side
 	if t.state.ClientSide() {
 		binary.BigEndian.PutUint32(mask[:], rand.Uint32())
-		xwsutil.FastCipher(p, mask, 0)
+		wsutils.FastCipher(p, mask, 0)
 	}
 
 	// pack websocket header
@@ -210,13 +297,15 @@ func (t *websocketTransport) Write(p []byte) (n int, err error) {
 func (t *websocketTransport) writeCompress(p []byte) (n int, err error) {
 
 	var payloadBuffer *bytes.Buffer
-	var flateWriter *xwsflate.Writer
+	var flateWriter *wsutils.FlateWriter
 	defer func() {
 		if nil != payloadBuffer {
 			pbuffer.Put(payloadBuffer)
 		}
 
-		if nil != flateWriter {
+		// if writer is persistent, do not put it back here; persistent writer
+		// kept in t.persistentFlateWriter and will be returned on Close.
+		if nil != flateWriter && flateWriter != t.persistentFlateWriter {
 			flateWriter.Reset(nil)
 			t.options.flateWriterPool.Put(flateWriter)
 		}
@@ -232,8 +321,14 @@ func (t *websocketTransport) writeCompress(p []byte) (n int, err error) {
 	// payload compression
 	if compressed = t.options.CompressEnabled && payloadLength >= t.options.CompressThreshold; compressed {
 		payloadBuffer = pbuffer.Get(int(payloadLength))
-		flateWriter = t.options.flateWriterPool.Get().(*xwsflate.Writer)
-		flateWriter.Reset(payloadBuffer)
+
+		if t.persistentFlateWriter != nil {
+			flateWriter = t.persistentFlateWriter
+			flateWriter.Reset(payloadBuffer)
+		} else {
+			flateWriter = t.options.flateWriterPool.Get().(*wsutils.FlateWriter)
+			flateWriter.Reset(payloadBuffer)
+		}
 
 		if _, err = flateWriter.Write(p); nil == err {
 			err = flateWriter.Flush()
@@ -244,11 +339,16 @@ func (t *websocketTransport) writeCompress(p []byte) (n int, err error) {
 		p = payloadBuffer.Bytes()
 	}
 
+	// If compression failed, return the error
+	if err != nil {
+		return 0, err
+	}
+
 	var mask [4]byte
 	// xor bytes if client side
 	if t.state.ClientSide() {
 		binary.BigEndian.PutUint32(mask[:], rand.Uint32())
-		xwsutil.FastCipher(p, mask, 0)
+		wsutils.FastCipher(p, mask, 0)
 	}
 
 	packetBuffers := pbytes.Get(ws.MaxHeaderSize + len(p))
@@ -296,7 +396,7 @@ func (t *websocketTransport) WriteClose(code int, reason string) (err error) {
 	if t.state.ClientSide() {
 		closeFrame.Header.Masked = true
 		binary.BigEndian.PutUint32(closeFrame.Header.Mask[:], rand.Uint32())
-		xwsutil.FastCipher(closeFrame.Payload, closeFrame.Header.Mask, 0)
+		wsutils.FastCipher(closeFrame.Payload, closeFrame.Header.Mask, 0)
 	}
 
 	t.writeLocker.Lock()
@@ -311,6 +411,23 @@ func (t *websocketTransport) Flush() error {
 	t.writeLocker.Lock()
 	defer t.writeLocker.Unlock()
 	return t.Transport.Flush()
+}
+
+// Close closes the underlying transport and releases any persistent flate
+// instances back to pools.
+func (t *websocketTransport) Close() error {
+	// release persistent flate reader
+	if t.persistentFlateReader != nil {
+		t.persistentFlateReader.Reset(nil)
+		t.options.flateReaderPool.Put(t.persistentFlateReader)
+		t.persistentFlateReader = nil
+	}
+	if t.persistentFlateWriter != nil {
+		t.persistentFlateWriter.Reset(nil)
+		t.options.flateWriterPool.Put(t.persistentFlateWriter)
+		t.persistentFlateWriter = nil
+	}
+	return t.Transport.Close()
 }
 
 func (t *websocketTransport) packHeader(bts []byte, fin bool, mask [4]byte, length int64, compressed bool) (n int, err error) {
@@ -356,4 +473,56 @@ func (t *websocketTransport) packHeader(bts []byte, fin bool, mask [4]byte, leng
 		n += copy(bts[n:], mask[:])
 	}
 	return
+}
+
+// parsePerMessageDeflate parses Sec-WebSocket-Extensions header values and fills negotiated params
+func parsePerMessageDeflate(hs ws.Handshake, out *struct {
+	enabled             bool
+	clientNoContextTake bool
+	serverNoContextTake bool
+	clientMaxWindowBits int
+	serverMaxWindowBits int
+}) {
+	if out == nil {
+		return
+	}
+	for _, opt := range hs.Extensions {
+		if string(opt.Name) != "permessage-deflate" {
+			continue
+		}
+		out.enabled = true
+		// parameters could be present without values
+		if _, ok := opt.Parameters.Get("client_no_context_takeover"); ok {
+			out.clientNoContextTake = true
+		}
+		if _, ok := opt.Parameters.Get("server_no_context_takeover"); ok {
+			out.serverNoContextTake = true
+		}
+		if v, ok := opt.Parameters.Get("client_max_window_bits"); ok {
+			if len(v) > 0 {
+				if n, err := strconv.Atoi(string(v)); err == nil {
+					out.clientMaxWindowBits = n
+				}
+			}
+		}
+		if v, ok := opt.Parameters.Get("server_max_window_bits"); ok {
+			if len(v) > 0 {
+				if n, err := strconv.Atoi(string(v)); err == nil {
+					out.serverMaxWindowBits = n
+				}
+			}
+		}
+		// we consider only first permessage-deflate extension occurrence
+		return
+	}
+}
+
+// perMessageDeflateRecvExt clears RSV1 bit on received headers so that
+// subsequent processing won't see extension bits set.
+type perMessageDeflateRecvExt struct{}
+
+func (perMessageDeflateRecvExt) UnsetBits(hdr ws.Header) (ws.Header, error) {
+	// clear RSV1 bit
+	hdr.Rsv &^= 0x4
+	return hdr, nil
 }

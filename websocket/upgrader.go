@@ -54,7 +54,7 @@ func NewHTTPUpgrader(engine netty.Bootstrap, option ...transport.Option) HTTPUpg
 }
 
 func (hu HTTPUpgrader) Upgrade(writer http.ResponseWriter, request *http.Request) (netty.Channel, error) {
-	conn, _, _, err := hu.Upgrader.Upgrade(request, writer)
+	conn, _, hs, err := hu.Upgrader.Upgrade(request, writer)
 	if nil != err {
 		if nil != conn {
 			_ = conn.Close()
@@ -62,7 +62,7 @@ func (hu HTTPUpgrader) Upgrade(writer http.ResponseWriter, request *http.Request
 		return nil, err
 	}
 
-	t, err := newWebsocketTransport(conn, hu.options, false, request)
+	t, err := newWebsocketTransport(conn, hu.options, false, request, hs)
 	if nil != err {
 		_ = conn.Close()
 		return nil, err

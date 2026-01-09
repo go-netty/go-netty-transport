@@ -24,7 +24,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/go-netty/go-netty-transport/websocket/internal/xwsflate"
+	"github.com/go-netty/go-netty-transport/websocket/internal/wsutils"
 	"github.com/go-netty/go-netty/transport"
 	"github.com/gobwas/httphead"
 	"github.com/gobwas/ws"
@@ -39,6 +39,7 @@ var DefaultOptions = (&Options{
 	ServeMux:          http.DefaultServeMux,
 	Backlog:           128,
 	NoDelay:           true,
+	CompressEnabled:   false,
 	CompressLevel:     flate.BestSpeed,
 	CompressThreshold: 512,
 }).Apply()
@@ -62,21 +63,25 @@ type Options struct {
 	Dialer            ws.Dialer       `json:"-"`
 	Upgrader          ws.HTTPUpgrader `json:"-"`
 	ServeMux          *http.ServeMux  `json:"-"`
-	flateReaderPool   sync.Pool
-	flateWriterPool   sync.Pool
+	flateReaderPool   *sync.Pool
+	flateWriterPool   *sync.Pool
 }
 
 func (o *Options) Apply() *Options {
+	o.flateReaderPool = &sync.Pool{}
+	o.flateWriterPool = &sync.Pool{}
+
 	o.flateReaderPool.New = func() interface{} {
-		return xwsflate.NewReader(nil, func(reader io.Reader) wsflate.Decompressor {
-			return flate.NewReader(reader)
+		return wsutils.NewFlateReader(nil, func(reader io.Reader) wsflate.Decompressor {
+			r := flate.NewReader(reader)
+			return r
 		})
 	}
 
 	if o.CompressEnabled {
 		compressLv := o.CompressLevel
 		o.flateWriterPool.New = func() interface{} {
-			return xwsflate.NewWriter(nil, func(writer io.Writer) wsflate.Compressor {
+			return wsutils.NewFlateWriter(nil, func(writer io.Writer) wsflate.Compressor {
 				w, _ := flate.NewWriter(writer, compressLv)
 				return w
 			})

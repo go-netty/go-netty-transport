@@ -13,9 +13,9 @@ var _ net.Conn = &Conn{}
 // Conn is a generic quic connection implements net.Conn.
 type Conn struct {
 	conn  *net.UDPConn
-	qconn quic.Connection
+	qconn *quic.Conn
 
-	stream quic.Stream
+	stream *quic.Stream
 }
 
 // Read implements the Conn Read method.
